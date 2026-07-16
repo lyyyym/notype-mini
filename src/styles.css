@@ -1,0 +1,225 @@
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  background: #f5f5f7;
+  color: #1d1d1f;
+  line-height: 1.5;
+}
+
+/* 主窗口样式 */
+.app-container {
+  max-width: 700px;
+  margin: 0 auto;
+  padding: 32px;
+}
+
+.app-header {
+  margin-bottom: 28px;
+}
+
+.app-header h1 {
+  font-size: 28px;
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+
+.app-header p {
+  color: #6e6e73;
+  font-size: 14px;
+}
+
+.card {
+  background: white;
+  border-radius: 12px;
+  padding: 20px;
+  margin-bottom: 16px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+}
+
+.card h2 {
+  font-size: 16px;
+  font-weight: 600;
+  margin-bottom: 16px;
+}
+
+.form-group {
+  margin-bottom: 16px;
+}
+
+.form-group label {
+  display: block;
+  font-size: 13px;
+  font-weight: 500;
+  margin-bottom: 6px;
+  color: #3a3a3c;
+}
+
+.form-group input[type="text"],
+.form-group input[type="password"] {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid #d2d2d7;
+  border-radius: 8px;
+  font-size: 14px;
+  background: #fafafa;
+  transition: border-color 0.2s;
+}
+
+.form-group input:focus {
+  outline: none;
+  border-color: #007aff;
+  background: white;
+}
+
+.form-group input::placeholder {
+  color: #a1a1a6;
+}
+
+.button-row {
+  display: flex;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+button {
+  padding: 10px 16px;
+  border: none;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.btn-primary {
+  background: #007aff;
+  color: white;
+}
+
+.btn-primary:hover {
+  background: #0051d5;
+}
+
+.btn-secondary {
+  background: #e5e5ea;
+  color: #1d1d1f;
+}
+
+.btn-secondary:hover {
+  background: #d1d1d6;
+}
+
+.status-text {
+  font-size: 13px;
+  color: #6e6e73;
+  margin-top: 12px;
+  min-height: 20px;
+}
+
+.status-text.success {
+  color: #34c759;
+}
+
+.status-text.error {
+  color: #ff3b30;
+}
+
+.result-box {
+  background: #f5f5f7;
+  border-radius: 8px;
+  padding: 16px;
+  margin-top: 16px;
+  min-height: 80px;
+  font-size: 15px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+}
+
+/* 气泡窗口样式 */
+.bubble-container {
+  width: 220px;
+  height: 220px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: rgba(30, 30, 30, 0.92);
+  border-radius: 50%;
+  color: white;
+  user-select: none;
+  overflow: hidden;
+}
+
+.bubble-ring {
+  width: 160px;
+  height: 160px;
+  border-radius: 50%;
+  border: 3px solid rgba(255, 255, 255, 0.2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  transition: transform 0.1s ease-out;
+}
+
+.bubble-ring.active {
+  border-color: #007aff;
+}
+
+.bubble-inner {
+  text-align: center;
+}
+
+.bubble-icon {
+  font-size: 48px;
+  margin-bottom: 8px;
+}
+
+.bubble-status {
+  font-size: 14px;
+  font-weight: 500;
+  opacity: 0.9;
+}
+
+.bubble-timer {
+  font-size: 12px;
+  opacity: 0.7;
+  margin-top: 4px;
+}
+
+.bubble-processing {
+  text-align: center;
+}
+
+.bubble-spinner {
+  width: 48px;
+  height: 48px;
+  border: 3px solid rgba(255, 255, 255, 0.2);
+  border-top-color: #007aff;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+  margin: 0 auto 12px;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.shortcut-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: #f5f5f7;
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-family: monospace;
+  color: #3a3a3c;
+}
