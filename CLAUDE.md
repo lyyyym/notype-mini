@@ -156,3 +156,9 @@ macOS 下 `tauri-plugin-global-shortcut` 不允许重复注册同一个热键。
 `edit_pipeline` 在准备输出结果时曾用 `.expect("创建 Enigo 失败")` 初始化 `Enigo`。当用户选中文字并按编辑快捷键时，如果 Enigo 因辅助功能权限等原因创建失败，整个 async 任务会 panic，在开发配置下表现为应用直接退出。
 
 **正确做法：** 所有用户可能触发的代码路径（尤其是异步 pipeline 和全局快捷键回调）都必须用 `Result` 传播错误，并通过 `emit_error` 把错误展示给用户，绝不能用 `.expect`/`.unwrap` 假设外部资源一定可用。
+
+### enigo 0.2 `Key::Unicode` 在 macOS 上存在栈溢出
+
+enigo 0.2.1 的 macOS 实现中，`Key::Unicode` 会调用 `keycode_to_string()` 把字符映射到 keycode。该函数内部只分配了一个 `i8` 类型的单字节缓冲区，却向它写入 `CFStringGetLength() + 1` 个字节，造成栈溢出，导致程序崩溃。
+
+**正确做法：** 在需要模拟组合键（如 `Cmd+C`）时，避免使用 `Key::Unicode`。对标准键盘布局，改用 `Key::Other(8)`（即 'c' 键的 keycode）配合 `Key::Meta` 来模拟；并注意在快捷键释放后留出短暂延迟，等用户物理修饰键释放后再模拟按键。
