@@ -1113,3 +1113,53 @@ pub fn run() {
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_shortcut_command_period() {
+        let shortcut = parse_shortcut("Command+Period").unwrap();
+        assert_eq!(shortcut.key, Code::Period);
+        assert!(shortcut.mods.contains(Modifiers::SUPER));
+    }
+
+    #[test]
+    fn test_parse_shortcut_command_option_period() {
+        let shortcut = parse_shortcut("Command+Option+Period").unwrap();
+        assert_eq!(shortcut.key, Code::Period);
+        assert!(shortcut.mods.contains(Modifiers::SUPER));
+        assert!(shortcut.mods.contains(Modifiers::ALT));
+    }
+
+    #[test]
+    fn test_parse_shortcut_aliases() {
+        let a = parse_shortcut("Cmd+Alt+.").unwrap();
+        let b = parse_shortcut("Command+Option+Period").unwrap();
+        assert_eq!(a.key, b.key);
+        assert_eq!(a.mods, b.mods);
+    }
+
+    #[test]
+    fn test_parse_shortcut_bare_escape() {
+        let shortcut = parse_shortcut("Escape").unwrap();
+        assert!(is_bare_escape(&shortcut));
+    }
+
+    #[test]
+    fn test_parse_shortcut_empty_rejected() {
+        assert!(parse_shortcut("").is_err());
+        assert!(parse_shortcut("   ").is_err());
+    }
+
+    #[test]
+    fn test_parse_shortcut_invalid_modifier() {
+        assert!(parse_shortcut("Foo+Period").is_err());
+    }
+
+    #[test]
+    fn test_parse_shortcut_invalid_key() {
+        assert!(parse_shortcut("Command+Foo").is_err());
+    }
+}
