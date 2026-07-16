@@ -75,7 +75,7 @@ cd src-tauri && cargo check
 - `⌘+Option+.`：语音编辑快捷键（默认），先选中文本后按住说话，松开后替换选区。
 - `Esc`：取消当前录音或编辑。
 
-快捷键字符串通过 `lib.rs` 中的 `parse_shortcut()` 解析为 `tauri-plugin-global-shortcut::Shortcut`。`set_config` 会重新注册快捷键，并在失败时回滚。
+快捷键字符串通过 `lib.rs` 中的 `parse_shortcut()` 解析为 `tauri-plugin-global-shortcut::Shortcut`。`set_config` 会**只注册发生变化的快捷键**，成功后再注销旧快捷键；如果新旧快捷键相同，则直接保存配置，避免重复注册。
 
 ### 录音流程
 
@@ -142,3 +142,11 @@ cd src-tauri && cargo check
 - `Control+Shift+Space`
 
 支持的修饰键：`Command`/`Cmd`/`Super`、`Control`/`Ctrl`、`Option`/`Alt`、`Shift`。支持的按键包括字母、数字、标点符号以及 `Escape`、`Space`、`Return`、`Tab` 等（完整映射见 `lib.rs` 的 `normalize_key()`）。
+
+## 已踩过的坑
+
+### 全局快捷键重复注册
+
+macOS 下 `tauri-plugin-global-shortcut` 不允许重复注册同一个热键。`set_config` 早期实现会在每次保存配置时重新注册当前快捷键，即使用户没有修改快捷键，这会导致 `RegisterEventHotKey failed for Period` 错误并让整个保存失败。
+
+**正确做法：** 在 `set_config` 中先比较新旧快捷键是否相同，相同则跳过注册；只注册真正变化的快捷键，注册成功后再注销旧快捷键。失败时必须回滚已注册的新快捷键。
