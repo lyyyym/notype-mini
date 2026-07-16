@@ -5,6 +5,7 @@ mod dictionary;
 mod history;
 mod llm;
 
+use std::path::PathBuf;
 use std::sync::Mutex;
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
@@ -701,6 +702,8 @@ async fn edit_pipeline(
     wav_bytes: Vec<u8>,
     duration_ms: u64,
 ) {
+    eprintln!("[edit_pipeline] 开始识别指令");
+
     // 1. 识别指令
     let instruction = match dashscope::transcribe(wav_bytes, &config.dashscope).await {
         Ok(text) => dictionary::apply_dictionary(&text, &config.dictionary),
@@ -716,11 +719,13 @@ async fn edit_pipeline(
     };
 
     if instruction.trim().is_empty() {
+        eprintln!("[edit_pipeline] 指令为空，结束");
         emit_state(&app, "idle", None);
         return;
     }
 
     // 2. 获取选中文本
+    eprintln!("[edit_pipeline] 开始捕获选中文本");
     let (original_clipboard, selected_text) =
         match capture_selected_text(&config.edit_shortcut,
         ) {
@@ -738,12 +743,16 @@ async fn edit_pipeline(
         };
 
     // scopeguard 保证剪贴板恢复
+    eprintln!("[edit_pipeline] 选中文本: {:?}", selected_text.as_ref().map(|s| s.chars().take(50).collect::<String>()));
+
     let app_for_cleanup = app.clone();
     let _cleanup = scopeguard::guard(original_clipboard.clone(), |original| {
+        eprintln!("[edit_pipeline] scopeguard 恢复剪贴板");
         restore_clipboard(original, &app_for_cleanup);
     });
 
     // 3. 调用 LLM 编辑
+    eprintln!("[edit_pipeline] 开始调用 LLM 编辑");
     let result_text = match llm::edit(
         &instruction,
         selected_text.as_deref(),
@@ -761,6 +770,8 @@ async fn edit_pipeline(
     };
 
     // 4. 输入结果
+    eprintln!("[edit_pipeline] LLM 编辑结果: {}", result_text.chars().take(50).collect::<String>());
+    eprintln!("[edit_pipeline] 开始输入结果");
     let mut enigo = match enigo::Enigo::new(&enigo::Settings::default()) {
         Ok(e) => Some(e),
         Err(e) => {
@@ -805,6 +816,7 @@ async fn edit_pipeline(
     }
 
     // 再次恢复剪贴板（type_text 的 clipboard fallback 可能覆盖了它）
+    eprintln!("[edit_pipeline] 最终恢复剪贴板");
     drop(_cleanup);
     restore_clipboard(original_clipboard, &app);
 
@@ -832,9 +844,10 @@ async fn edit_pipeline(
         entry_type: history::EntryType::Edit,
     };
     if let Err(e) = history::add_entry(entry) {
-        eprintln!("保存编辑历史记录失败: {}", e);
+        eprintln!("[edit_pipeline] 保存编辑历史记录失败: {}", e);
     }
 
+    eprintln!("[edit_pipeline] 完成");
     emit_result(&app, result_text, history::EntryType::Edit);
     emit_state(&app, "idle", None);
 }
@@ -853,9 +866,11 @@ fn capture_selected_text(
 ) -> Result<(OriginalClipboard, Option<String>), anyhow::Error> {
     use enigo::{Direction::Release, Enigo, Key, Keyboard, Settings};
 
+    eprintln!("[capture_selected_text] 创建 Enigo");
     let mut enigo = Enigo::new(&Settings::default())?;
 
     // 根据编辑快捷键释放可能仍按下的修饰键
+    eprintln!("[capture_selected_text] 释放修饰键");
     let parsed = parse_shortcut(edit_shortcut_str)
         .map_err(|e| anyhow::anyhow!("解析编辑快捷键失败: {}", e))?;
     if parsed.mods.contains(Modifiers::SUPER) {
@@ -872,6 +887,7 @@ fn capture_selected_text(
     }
 
     // 保存原始剪贴板
+    eprintln!("[capture_selected_text] 初始化剪贴板");
     let mut clipboard = arboard::Clipboard::new()
         .map_err(|e| anyhow::anyhow!("剪贴板初始化失败: {}", e))?;
 
@@ -884,17 +900,20 @@ fn capture_selected_text(
     };
 
     // 设置 sentinel
+    eprintln!("[capture_selected_text] 设置 sentinel");
     let sentinel = format!("__NOTYPE_CLIPBOARD_SENTINEL_{}__", uuid::Uuid::new_v4());
     clipboard
         .set_text(&sentinel)
         .map_err(|e| anyhow::anyhow!("设置 sentinel 失败: {}", e))?;
 
     // 模拟 Cmd+C
+    eprintln!("[capture_selected_text] 模拟 Cmd+C");
     enigo.key(Key::Meta, enigo::Direction::Press)?;
     enigo.key(Key::Unicode('c'), enigo::Direction::Click)?;
     enigo.key(Key::Meta, enigo::Direction::Release)?;
 
     // 轮询剪贴板
+    eprintln!("[capture_selected_text] 轮询剪贴板");
     let mut selected_text: Option<String> = None;
     let start = std::time::Instant::now();
     while start.elapsed() < std::time::Duration::from_millis(500) {
@@ -908,8 +927,10 @@ fn capture_selected_text(
     }
 
     // 立即恢复原始剪贴板
+    eprintln!("[capture_selected_text] 恢复原始剪贴板");
     restore_clipboard_internal(&original, &mut clipboard)?;
 
+    eprintln!("[capture_selected_text] 完成");
     Ok((original, selected_text))
 }
 
@@ -1058,6 +1079,18 @@ pub fn run() {
             get_stats,
         ])
         .setup(|app| {
+            // 设置 panic hook，把崩溃信息写入日志文件，便于用户反馈
+            let panic_log_dir = dirs::data_dir()
+                .unwrap_or_else(|| PathBuf::from("."))
+                .join("notype-mini");
+            std::panic::set_hook(Box::new(move |info| {
+                let backtrace = std::backtrace::Backtrace::capture();
+                let msg = format!("PANIC: {}\nBacktrace:\n{}", info, backtrace);
+                eprintln!("{}", msg);
+                let _ = std::fs::create_dir_all(&panic_log_dir);
+                let _ = std::fs::write(panic_log_dir.join("panic.log"), msg);
+            }));
+
             // 设置系统托盘
             if let Err(e) = setup_tray(app) {
                 eprintln!("设置系统托盘失败: {}", e);
