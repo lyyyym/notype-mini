@@ -453,7 +453,10 @@ fn start_recording(app: &AppHandle, state: State<AppState>, mode: ActiveMode) {
                 session.active_mode = mode;
                 session.recorder = Some(handle);
             }
-            show_bubble(app);
+            // 编辑模式不显示气泡，避免气泡窗口抢走目标应用焦点
+            if mode == ActiveMode::Transcribe {
+                show_bubble(app);
+            }
             let mode_str = match mode {
                 ActiveMode::Transcribe => Some("transcribe"),
                 ActiveMode::Edit => Some("edit"),
@@ -716,10 +719,6 @@ async fn edit_pipeline(
     duration_ms: u64,
 ) {
     eprintln!("[edit_pipeline] 开始识别指令");
-
-    // 气泡窗口隐藏后，给 macOS 一点时间把焦点交还给之前的应用
-    eprintln!("[edit_pipeline] 等待焦点恢复");
-    std::thread::sleep(std::time::Duration::from_millis(300));
 
     // 1. 识别指令
     let instruction = match dashscope::transcribe(wav_bytes, &config.dashscope).await {
