@@ -761,12 +761,24 @@ async fn edit_pipeline(
     };
 
     // 4. 输入结果
-    let mut enigo = None;
-    if let Err(e) = release_modifiers(enigo.get_or_insert(
-        enigo::Enigo::new(&enigo::Settings::default())
-            .expect("创建 Enigo 失败"),
-    )) {
-        eprintln!("释放修饰键失败: {}", e);
+    let mut enigo = match enigo::Enigo::new(&enigo::Settings::default()) {
+        Ok(e) => Some(e),
+        Err(e) => {
+            eprintln!("创建 Enigo 失败: {:?}", e);
+            emit_error(
+                &app,
+                "input_failed",
+                format!("无法创建键盘输入: {:?}", e),
+            );
+            emit_state(&app, "idle", None);
+            return;
+        }
+    };
+
+    if let Some(ref mut e) = enigo {
+        if let Err(err) = release_modifiers(e) {
+            eprintln!("释放修饰键失败: {}", err);
+        }
     }
 
     // 删除选区
