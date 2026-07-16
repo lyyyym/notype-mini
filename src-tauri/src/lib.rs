@@ -6,6 +6,8 @@ mod llm;
 
 use std::sync::Mutex;
 use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
+use tauri::tray::TrayIconBuilder;
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutEvent, ShortcutState};
 
 // 事件载荷结构
@@ -29,6 +31,22 @@ struct ErrorEvent {
 struct AppState {
     config: Mutex<config::Config>,
     recorder: Mutex<Option<audio::RecorderHandle>>,
+}
+
+// 录音模式
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum RecordingMode {
+    PushToTalk,
+    Continuous,
+}
+
+impl From<&str> for RecordingMode {
+    fn from(s: &str) -> Self {
+        match s {
+            "continuous" => Self::Continuous,
+            _ => Self::PushToTalk,
+        }
+    }
 }
 
 // 命令：获取配置
@@ -124,6 +142,64 @@ fn hide_bubble(app: &AppHandle) {
     }
 }
 
+// 设置系统托盘
+fn setup_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
+    let show_i = MenuItem::with_id(app, "show", "显示主窗口", true, None::<&str>)?;
+    let hide_i = MenuItem::with_id(app, "hide", "隐藏主窗口", true, None::<&str>)?;
+    let quit_i = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
+    let menu = Menu::with_items(
+        app,
+        &[&show_i,
+            &hide_i,
+            &PredefinedMenuItem::separator(app)?,
+            &quit_i,
+        ],
+    )?;
+
+    TrayIconBuilder::new()
+        .icon(app.default_window_icon().unwrap().clone())
+        .menu(&menu)
+        .show_menu_on_left_click(true)
+        .on_menu_event(|app, event| {
+            match event.id.as_ref() {
+                "show" => {
+                    if let Some(w) = app.get_webview_window("main") {
+                        let _ = w.show();
+                        let _ = w.set_focus();
+                    }
+                }
+                "hide" => {
+                    if let Some(w) = app.get_webview_window("main") {
+                        let _ = w.hide();
+                    }
+                }
+                "quit" => app.exit(0),
+                _ => {}
+            }
+        })
+        .build(app)?;
+
+    Ok(())
+}
+
+// 取消当前录音
+fn cancel_recording(app: &AppHandle, state: State<AppState>) {
+    let handle = {
+        let mut guard = state.recorder.lock().unwrap();
+        guard.take()
+    };
+
+    if let Some(handle) = handle {
+        hide_bubble(app);
+        emit_state(app, "idle");
+
+        // 在异步任务中停止录音并丢弃音频
+        tauri::async_runtime::spawn(async move {
+            let _ = handle.stop();
+        });
+    }
+}
+
 // 开始录音
 fn start_recording(app: &AppHandle, state: State<AppState>) {
     let app_handle = app.clone();
@@ -142,17 +218,54 @@ fn start_recording(app: &AppHandle, state: State<AppState>) {
     }
 }
 
+// 设置剪贴板内容
+fn set_clipboard_text(text: &str) -> Result<(), anyhow::Error> {
+    let mut clipboard = arboard::Clipboard::new()
+        .map_err(|e| anyhow::anyhow!("剪贴板初始化失败: {}", e))?;
+    clipboard
+        .set_text(text)
+        .map_err(|e| anyhow::anyhow!("复制到剪贴板失败: {}", e))?;
+    Ok(())
+}
+
 // 文字输入到光标位置
-fn type_text(text: &str, auto_enter: bool) -> Result<(), anyhow::Error> {
-    use enigo::{Direction::Click, Enigo, Key, Keyboard, Settings};
+fn type_text(text: &str, auto_enter: bool, config: &config::Config) -> Result<(), anyhow::Error> {
+    use enigo::{
+        Direction::Click, Direction::Press, Direction::Release, Enigo, Key, Keyboard, Settings,
+    };
 
     let mut enigo = Enigo::new(&Settings::default())?;
+    let use_fallback = config.use_clipboard_fallback;
+    let threshold = config.clipboard_fallback_threshold;
 
-    // 模拟键盘输入文字
-    enigo.text(text).map_err(|e| anyhow::anyhow!("键盘输入失败: {:?}", e))?;
+    let mut used_clipboard = false;
+
+    if use_fallback && text.chars().count() > threshold {
+        set_clipboard_text(text)?;
+        used_clipboard = true;
+    } else {
+        if let Err(e) = enigo.text(text) {
+            if use_fallback {
+                eprintln!("键盘输入失败，回退到剪贴板粘贴: {:?}", e);
+                set_clipboard_text(text)?;
+                used_clipboard = true;
+            } else {
+                return Err(anyhow::anyhow!("键盘输入失败: {:?}", e));
+            }
+        }
+    }
+
+    if used_clipboard {
+        // macOS: Cmd+V
+        enigo.key(Key::Meta, Press)?;
+        enigo.key(Key::Unicode('v'), Click)?;
+        enigo.key(Key::Meta, Release)?;
+    }
 
     if auto_enter {
-        enigo.key(Key::Return, Click).map_err(|e| anyhow::anyhow!("回车失败: {:?}", e))?;
+        enigo
+            .key(Key::Return, Click)
+            .map_err(|e| anyhow::anyhow!("回车失败: {:?}", e))?;
     }
 
     Ok(())
@@ -205,7 +318,7 @@ fn stop_recording(app: &AppHandle, state: State<AppState>) {
                                     };
 
                                     // 输入到光标位置
-                                    if let Err(e) = type_text(&final_text, config.auto_enter) {
+                                    if let Err(e) = type_text(&final_text, config.auto_enter, &config) {
                                         eprintln!("输入失败: {}", e);
                                         emit_error(
                                             &app_clone,
@@ -267,19 +380,46 @@ fn stop_recording(app: &AppHandle, state: State<AppState>) {
 }
 
 // 全局快捷键处理函数
-fn handle_shortcut(app: &AppHandle, _shortcut: &Shortcut, event: ShortcutEvent) {
-    let state: State<AppState> = app.state();
+fn handle_shortcut(app: &AppHandle, shortcut: &Shortcut, event: ShortcutEvent) {
+    // Esc 取消当前录音
+    if shortcut.key == Code::Escape && event.state() == ShortcutState::Pressed {
+        let state: State<AppState> = app.state();
+        if state.recorder.lock().unwrap().is_some() {
+            cancel_recording(app, state);
+        }
+        return;
+    }
 
-    match event.state() {
-        ShortcutState::Pressed => {
-            // 避免重复开始
-            if state.recorder.lock().unwrap().is_none() {
-                start_recording(app, state);
+    // 只处理 Cmd+.
+    if shortcut.key != Code::Period || shortcut.mods != Modifiers::SUPER {
+        return;
+    }
+
+    let state: State<AppState> = app.state();
+    let mode = RecordingMode::from(state.config.lock().unwrap().recording_mode.as_str());
+
+    match mode {
+        RecordingMode::Continuous => {
+            if event.state() == ShortcutState::Pressed {
+                if state.recorder.lock().unwrap().is_some() {
+                    stop_recording(app, state);
+                } else {
+                    start_recording(app, state);
+                }
             }
         }
-        ShortcutState::Released => {
-            if state.recorder.lock().unwrap().is_some() {
-                stop_recording(app, state);
+        RecordingMode::PushToTalk => {
+            match event.state() {
+                ShortcutState::Pressed => {
+                    if state.recorder.lock().unwrap().is_none() {
+                        start_recording(app, state);
+                    }
+                }
+                ShortcutState::Released => {
+                    if state.recorder.lock().unwrap().is_some() {
+                        stop_recording(app, state);
+                    }
+                }
             }
         }
     }
@@ -310,11 +450,35 @@ pub fn run() {
             get_stats,
         ])
         .setup(|app| {
-            // 注册全局快捷键
+            // 设置系统托盘
+            if let Err(e) = setup_tray(app) {
+                eprintln!("设置系统托盘失败: {}", e);
+            }
+
+            // 主窗口关闭时隐藏到托盘，而不是退出
+            if let Some(window) = app.get_webview_window("main") {
+                let app_handle = app.handle().clone();
+                window.on_window_event(move |event| {
+                    if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                        if let Some(w) = app_handle.get_webview_window("main") {
+                            let _ = w.hide();
+                        }
+                        api.prevent_close();
+                    }
+                });
+            }
+
+            // 注册全局快捷键 Cmd+.
             let shortcut = Shortcut::new(Some(Modifiers::SUPER), Code::Period);
             if let Err(e) = app.global_shortcut().register(shortcut) {
                 eprintln!("注册全局快捷键失败: {}", e);
                 emit_error(app.handle(), "shortcut_register_failed", e.to_string());
+            }
+
+            // 注册 Esc 取消录音
+            let esc_shortcut = Shortcut::new(None, Code::Escape);
+            if let Err(e) = app.global_shortcut().register(esc_shortcut) {
+                eprintln!("注册 Esc 快捷键失败: {}", e);
             }
 
             // 首次启动显示主窗口

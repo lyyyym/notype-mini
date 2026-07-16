@@ -12,6 +12,9 @@ pub struct Config {
     pub llm: LlmConfig,
     pub output_mode: String, // "polish" | "verbatim"
     pub auto_enter: bool,
+    pub recording_mode: String,             // "push_to_talk" | "continuous"
+    pub use_clipboard_fallback: bool,       // 长文本或输入失败时改用剪贴板粘贴
+    pub clipboard_fallback_threshold: usize, // 触发剪贴板回退的字数阈值
 }
 
 impl Default for Config {
@@ -23,6 +26,9 @@ impl Default for Config {
             llm: LlmConfig::default(),
             output_mode: "polish".to_string(),
             auto_enter: false,
+            recording_mode: "push_to_talk".to_string(),
+            use_clipboard_fallback: true,
+            clipboard_fallback_threshold: 100,
         }
     }
 }
@@ -72,6 +78,9 @@ mod tests {
         assert!(config.sound_feedback);
         assert_eq!(config.output_mode, "polish");
         assert!(!config.auto_enter);
+        assert_eq!(config.recording_mode, "push_to_talk");
+        assert!(config.use_clipboard_fallback);
+        assert_eq!(config.clipboard_fallback_threshold, 100);
         assert_eq!(config.dashscope.model, "paraformer-v2");
         assert_eq!(config.llm.model, "deepseek-chat");
     }

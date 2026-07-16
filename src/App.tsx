@@ -21,6 +21,9 @@ interface Config {
   llm: LlmConfig;
   output_mode: string;
   auto_enter: boolean;
+  recording_mode: "push_to_talk" | "continuous";
+  use_clipboard_fallback: boolean;
+  clipboard_fallback_threshold: number;
 }
 
 interface HistoryEntry {
@@ -58,6 +61,9 @@ function App() {
     },
     output_mode: "polish",
     auto_enter: false,
+    recording_mode: "push_to_talk",
+    use_clipboard_fallback: true,
+    clipboard_fallback_threshold: 100,
   });
 
   const [status, setStatus] = useState("等待开始...");
@@ -250,7 +256,17 @@ function App() {
     <div className="app-container">
       <header className="app-header">
         <h1>NoType Mini</h1>
-        <p>按住 <span className="shortcut-hint">⌘+.</span> 说话，松开后自动输入。</p>
+        <p>
+          {config.recording_mode === "push_to_talk" ? (
+            <>
+              按住 <span className="shortcut-hint">⌘+.</span> 说话，松开后自动输入。
+            </>
+          ) : (
+            <>
+              按 <span className="shortcut-hint">⌘+.</span> 开始录音，再按结束，Esc 取消。
+            </>
+          )}
+        </p>
       </header>
 
       <section className="card">
@@ -357,6 +373,28 @@ function App() {
       <section className="card">
         <h2>输出设置</h2>
         <div className="form-group">
+          <label>录音模式</label>
+          <select
+            value={config.recording_mode}
+            onChange={(e) =>
+              setConfig((prev) => ({
+                ...prev,
+                recording_mode: e.target.value as "push_to_talk" | "continuous",
+              }))
+            }
+            style={{
+              width: "100%",
+              padding: "10px 12px",
+              borderRadius: 8,
+              border: "1px solid #d2d2d7",
+              fontSize: 14,
+            }}
+          >
+            <option value="push_to_talk">按住说话（按住 ⌘+. 录音，松开结束）</option>
+            <option value="continuous">连续录音（按 ⌘+. 开始，再按结束，Esc 取消）</option>
+          </select>
+        </div>
+        <div className="form-group">
           <label>输出模式</label>
           <select
             value={config.output_mode}
@@ -374,6 +412,36 @@ function App() {
             <option value="polish">智能整理（去口头禅、自动排版）</option>
             <option value="verbatim">逐字转写（保留原样）</option>
           </select>
+        </div>
+        <div className="form-group">
+          <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <input
+              type="checkbox"
+              checked={config.use_clipboard_fallback}
+              onChange={(e) =>
+                setConfig((prev) => ({
+                  ...prev,
+                  use_clipboard_fallback: e.target.checked,
+                }))
+              }
+            />
+            长文本或输入失败时改用剪贴板粘贴（Cmd+V）
+          </label>
+        </div>
+        <div className="form-group">
+          <label>剪贴板回退字数阈值</label>
+          <input
+            type="number"
+            min={0}
+            value={config.clipboard_fallback_threshold}
+            onChange={(e) =>
+              setConfig((prev) => ({
+                ...prev,
+                clipboard_fallback_threshold: Number(e.target.value),
+              }))
+            }
+            placeholder="100"
+          />
         </div>
         <div className="form-group">
           <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -472,9 +540,17 @@ function App() {
       <section className="card">
         <h2>使用说明</h2>
         <ul style={{ fontSize: 14, color: "#3a3a3c", paddingLeft: 18 }}>
-          <li>按住 <strong>⌘+.</strong> 开始录音，屏幕中央会出现音量气泡。</li>
-          <li>松开快捷键后，程序会自动识别、整理，并把文字输入到当前光标处。</li>
+          <li>
+            <strong>按住说话模式：</strong>按住 <strong>⌘+.</strong> 开始录音，屏幕中央会出现音量气泡；松开自动识别并输入。
+          </li>
+          <li>
+            <strong>连续录音模式：</strong>按一次 <strong>⌘+.</strong> 开始录音，再按一次结束；录音中按 <strong>Esc</strong> 取消。
+          </li>
+          <li>
+            程序会自动识别、整理，并把文字输入到当前光标处。长文本或输入失败时会改用剪贴板粘贴。
+          </li>
           <li>第一次使用需要在系统设置中授权麦克风 + 辅助功能权限。</li>
+          <li>关闭主窗口后应用会常驻在系统托盘，右键托盘图标可显示/隐藏窗口或退出。</li>
         </ul>
       </section>
     </div>
