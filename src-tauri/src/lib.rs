@@ -637,33 +637,46 @@ async fn transcribe_pipeline(
     wav_bytes: Vec<u8>,
     duration_ms: u64,
 ) {
+    eprintln!("[transcribe_pipeline] 开始识别");
+
     match dashscope::transcribe(wav_bytes, &config.dashscope).await {
         Ok(raw_text) => {
+            eprintln!("[transcribe_pipeline] 识别结果: {}", raw_text.chars().take(50).collect::<String>());
+
             // 应用个人词典
             let raw_text = dictionary::apply_dictionary(&raw_text, &config.dictionary);
+            eprintln!("[transcribe_pipeline] 词典替换后: {}", raw_text.chars().take(50).collect::<String>());
 
             // 根据输出模式决定是否润色
             let final_text = if config.output_mode == "polish" {
+                eprintln!("[transcribe_pipeline] 开始润色");
                 match llm::polish(&raw_text, &config.llm).await {
-                    Ok(polished) => polished,
+                    Ok(polished) => {
+                        eprintln!("[transcribe_pipeline] 润色完成: {}", polished.chars().take(50).collect::<String>());
+                        polished
+                    }
                     Err(e) => {
-                        eprintln!("润色失败，使用原始识别结果: {}", e);
+                        eprintln!("[transcribe_pipeline] 润色失败，使用原始识别结果: {}", e);
                         raw_text.clone()
                     }
                 }
             } else {
+                eprintln!("[transcribe_pipeline] verbatim 模式，跳过润色");
                 raw_text.clone()
             };
 
             // 输入到光标位置
+            eprintln!("[transcribe_pipeline] 开始输入，长度 {}", final_text.chars().count());
             let mut enigo = None;
             if let Err(e) = type_text(&final_text, config.auto_enter, &config, &mut enigo) {
-                eprintln!("输入失败: {}", e);
+                eprintln!("[transcribe_pipeline] 输入失败: {}", e);
                 emit_error(
                     &app,
                     "input_failed",
                     format!("无法输入文字: {}", e),
                 );
+            } else {
+                eprintln!("[transcribe_pipeline] 输入成功");
             }
 
             // 保存到历史记录
@@ -677,14 +690,14 @@ async fn transcribe_pipeline(
                 entry_type: history::EntryType::Transcribe,
             };
             if let Err(e) = history::add_entry(entry) {
-                eprintln!("保存历史记录失败: {}", e);
+                eprintln!("[transcribe_pipeline] 保存历史记录失败: {}", e);
             }
 
             emit_result(&app, final_text, history::EntryType::Transcribe);
             emit_state(&app, "idle", None);
         }
         Err(e) => {
-            eprintln!("识别失败: {}", e);
+            eprintln!("[transcribe_pipeline] 识别失败: {}", e);
             emit_error(
                 &app,
                 "transcription_failed",
