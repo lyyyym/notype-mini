@@ -741,6 +741,7 @@ async fn edit_pipeline(
     }
 
     // 2. 获取选中文本
+    eprintln!("[edit_pipeline] 当前前置应用: {:?}", frontmost_app_name());
     eprintln!("[edit_pipeline] 开始捕获选中文本");
     let (original_clipboard, selected_text) =
         match capture_selected_text(&config.edit_shortcut,
@@ -786,6 +787,7 @@ async fn edit_pipeline(
     };
 
     // 4. 输入结果
+    eprintln!("[edit_pipeline] 当前前置应用: {:?}", frontmost_app_name());
     eprintln!("[edit_pipeline] LLM 编辑结果: {}", result_text.chars().take(50).collect::<String>());
     eprintln!("[edit_pipeline] 开始输入结果");
     let mut enigo = match enigo::Enigo::new(&enigo::Settings::default()) {
@@ -831,6 +833,7 @@ async fn edit_pipeline(
         return;
     }
     eprintln!("[edit_pipeline] 编辑结果已输入");
+    eprintln!("[edit_pipeline] 输入后前置应用: {:?}", frontmost_app_name());
 
     // 再次恢复剪贴板（type_text 的 clipboard fallback 可能覆盖了它）
     eprintln!("[edit_pipeline] 最终恢复剪贴板");
@@ -875,6 +878,20 @@ enum OriginalClipboard {
     Text(String),
     Image(arboard::ImageData<'static>),
     None,
+}
+
+// 获取当前最前置应用名称（调试用）
+fn frontmost_app_name() -> Option<String> {
+    let output = std::process::Command::new("osascript")
+        .arg("-e")
+        .arg("tell application \"System Events\" to return name of first application process whose frontmost is true")
+        .output()
+        .ok()?;
+    if output.status.success() {
+        Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    } else {
+        None
+    }
 }
 
 // 捕获选中文本
