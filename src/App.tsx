@@ -14,6 +14,11 @@ interface LlmConfig {
   model: string;
 }
 
+interface DictionaryEntry {
+  from: string;
+  to: string;
+}
+
 interface Config {
   shortcut: string;
   sound_feedback: boolean;
@@ -24,6 +29,9 @@ interface Config {
   recording_mode: "push_to_talk" | "continuous";
   use_clipboard_fallback: boolean;
   clipboard_fallback_threshold: number;
+  edit_shortcut: string;
+  dictionary: DictionaryEntry[];
+  config_version: number;
 }
 
 interface HistoryEntry {
@@ -33,16 +41,26 @@ interface HistoryEntry {
   polished_text: string;
   word_count: number;
   duration_ms: number;
+  entry_type: "transcribe" | "edit";
 }
 
 interface HistoryStats {
-  total_words: number;
-  today_words: number;
-  total_sessions: number;
+  transcribe_total_words: number;
+  transcribe_today_words: number;
+  transcribe_total_sessions: number;
+  edit_total_words: number;
+  edit_today_words: number;
+  edit_total_sessions: number;
+}
+
+interface RecordingStateEvent {
+  state: string;
+  mode?: "transcribe" | "edit";
 }
 
 interface TranscriptionEvent {
   text: string;
+  entry_type: "transcribe" | "edit";
 }
 
 function App() {
@@ -64,6 +82,9 @@ function App() {
     recording_mode: "push_to_talk",
     use_clipboard_fallback: true,
     clipboard_fallback_threshold: 100,
+    edit_shortcut: "Command+Option+Period",
+    dictionary: [],
+    config_version: 1,
   });
 
   const [status, setStatus] = useState("等待开始...");
@@ -71,10 +92,17 @@ function App() {
   const [lastResult, setLastResult] = useState("");
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [stats, setStats] = useState<HistoryStats>({
-    total_words: 0,
-    today_words: 0,
-    total_sessions: 0,
+    transcribe_total_words: 0,
+    transcribe_today_words: 0,
+    transcribe_total_sessions: 0,
+    edit_total_words: 0,
+    edit_today_words: 0,
+    edit_total_sessions: 0,
   });
+
+  // 词典新增输入
+  const [newFrom, setNewFrom] = useState("");
+  const [newTo, setNewTo] = useState("");
 
   const loadHistory = async () => {
     try {
@@ -104,21 +132,30 @@ function App() {
     loadStats();
 
     // 监听事件
-    const unlistenState = listen<{ state: string }>("recording-state", (event) => {
-      if (event.payload.state === "recording") {
-        setStatus("正在录音...");
+    const unlistenState = listen<RecordingStateEvent>("recording-state", (event) => {
+      const { state, mode } = event.payload;
+      if (state === "recording") {
+        if (mode === "edit") {
+          setStatus("正在听取编辑指令...");
+        } else {
+          setStatus("正在录音...");
+        }
         setStatusType("");
-      } else if (event.payload.state === "processing") {
+      } else if (state === "processing") {
         setStatus("正在识别/整理...");
         setStatusType("");
-      } else if (event.payload.state === "idle") {
+      } else if (state === "idle") {
         setStatus("等待开始...");
       }
     });
 
     const unlistenResult = listen<TranscriptionEvent>("transcription-result", (event) => {
       setLastResult(event.payload.text);
-      setStatus("识别完成并已输入");
+      if (event.payload.entry_type === "edit") {
+        setStatus("编辑完成并已输入");
+      } else {
+        setStatus("识别完成并已输入");
+      }
       setStatusType("success");
       loadHistory();
       loadStats();
@@ -242,6 +279,41 @@ function App() {
     }));
   };
 
+  // 词典操作
+  const handleAddDictionaryEntry = () => {
+    const from = newFrom.trim();
+    const to = newTo.trim();
+
+    if (!from) {
+      setStatus("错误：听错词不能为空");
+      setStatusType("error");
+      return;
+    }
+
+    const exists = config.dictionary.some(
+      (entry) => entry.from.trim().toLowerCase() === from.toLowerCase()
+    );
+    if (exists) {
+      setStatus("错误：已存在相同的听错词");
+      setStatusType("error");
+      return;
+    }
+
+    setConfig((prev) => ({
+      ...prev,
+      dictionary: [...prev.dictionary, { from, to }],
+    }));
+    setNewFrom("");
+    setNewTo("");
+  };
+
+  const handleDeleteDictionaryEntry = (index: number) => {
+    setConfig((prev) => ({
+      ...prev,
+      dictionary: prev.dictionary.filter((_, i) => i !== index),
+    }));
+  };
+
   const formatTime = (iso: string) => {
     const date = new Date(iso);
     return date.toLocaleString("zh-CN", {
@@ -250,6 +322,10 @@ function App() {
       hour: "2-digit",
       minute: "2-digit",
     });
+  };
+
+  const entryTypeLabel = (type: string) => {
+    return type === "edit" ? "编辑" : "录音";
   };
 
   return (
@@ -279,18 +355,30 @@ function App() {
 
       <section className="card">
         <h2>统计</h2>
-        <div style={{ display: "flex", gap: 24, fontSize: 14 }}>
+        <div style={{ display: "flex", gap: 24, fontSize: 14, flexWrap: "wrap" }}>
           <div>
-            <div style={{ color: "#6e6e73" }}>累计字数</div>
-            <div style={{ fontSize: 24, fontWeight: 600 }}>{stats.total_words}</div>
+            <div style={{ color: "#6e6e73" }}>录音累计字数</div>
+            <div style={{ fontSize: 24, fontWeight: 600 }}>{stats.transcribe_total_words}</div>
           </div>
           <div>
-            <div style={{ color: "#6e6e73" }}>今日字数</div>
-            <div style={{ fontSize: 24, fontWeight: 600 }}>{stats.today_words}</div>
+            <div style={{ color: "#6e6e73" }}>录音今日字数</div>
+            <div style={{ fontSize: 24, fontWeight: 600 }}>{stats.transcribe_today_words}</div>
           </div>
           <div>
-            <div style={{ color: "#6e6e73" }}>累计次数</div>
-            <div style={{ fontSize: 24, fontWeight: 600 }}>{stats.total_sessions}</div>
+            <div style={{ color: "#6e6e73" }}>录音累计次数</div>
+            <div style={{ fontSize: 24, fontWeight: 600 }}>{stats.transcribe_total_sessions}</div>
+          </div>
+          <div>
+            <div style={{ color: "#6e6e73" }}>编辑累计字数</div>
+            <div style={{ fontSize: 24, fontWeight: 600 }}>{stats.edit_total_words}</div>
+          </div>
+          <div>
+            <div style={{ color: "#6e6e73" }}>编辑今日字数</div>
+            <div style={{ fontSize: 24, fontWeight: 600 }}>{stats.edit_today_words}</div>
+          </div>
+          <div>
+            <div style={{ color: "#6e6e73" }}>编辑累计次数</div>
+            <div style={{ fontSize: 24, fontWeight: 600 }}>{stats.edit_total_sessions}</div>
           </div>
         </div>
       </section>
@@ -395,6 +483,17 @@ function App() {
           </select>
         </div>
         <div className="form-group">
+          <label>编辑快捷键</label>
+          <input
+            type="text"
+            value={config.edit_shortcut}
+            onChange={(e) =>
+              setConfig((prev) => ({ ...prev, edit_shortcut: e.target.value }))
+            }
+            placeholder="Command+Option+Period"
+          />
+        </div>
+        <div className="form-group">
           <label>输出模式</label>
           <select
             value={config.output_mode}
@@ -458,6 +557,75 @@ function App() {
       </section>
 
       <section className="card">
+        <h2>个人词典</h2>
+        <p style={{ fontSize: 13, color: "#6e6e73", marginTop: -8 }}>
+          把识别错误的词映射到正确写法，会在识别后、润色前自动替换。
+        </p>
+
+        <div
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            gap: 8,
+            marginBottom: 16,
+          }}
+        >
+          {config.dictionary.map((entry, index) => (
+            <div
+              key={index}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                background: "#f5f5f7",
+                padding: "8px 12px",
+                borderRadius: 8,
+              }}
+            >
+              <span style={{ flex: 1, fontSize: 14 }}>{entry.from}</span>
+              <span style={{ color: "#6e6e73" }}>→</span>
+              <span style={{ flex: 1, fontSize: 14 }}>{entry.to}</span>
+              <button
+                className="btn-secondary"
+                style={{ padding: "4px 10px", fontSize: 12 }}
+                onClick={() => handleDeleteDictionaryEntry(index)}
+              >
+                删除
+              </button>
+            </div>
+          ))}
+        </div>
+
+        <div
+          style={{
+            display: "flex",
+            gap: 8,
+            alignItems: "center",
+            flexWrap: "wrap",
+          }}
+        >
+          <input
+            type="text"
+            placeholder="听错词"
+            value={newFrom}
+            onChange={(e) => setNewFrom(e.target.value)}
+            style={{ flex: 1, minWidth: 120 }}
+          />
+          <span style={{ color: "#6e6e73" }}>→</span>
+          <input
+            type="text"
+            placeholder="正确词"
+            value={newTo}
+            onChange={(e) => setNewTo(e.target.value)}
+            style={{ flex: 1, minWidth: 120 }}
+          />
+          <button className="btn-secondary" onClick={handleAddDictionaryEntry}>
+            添加
+          </button>
+        </div>
+      </section>
+
+      <section className="card">
         <div
           style={{
             display: "flex",
@@ -502,7 +670,9 @@ function App() {
                     color: "#6e6e73",
                   }}
                 >
-                  <span>{formatTime(entry.timestamp)}</span>
+                  <span>
+                    [{entryTypeLabel(entry.entry_type)}] {formatTime(entry.timestamp)}
+                  </span>
                   <span>{entry.word_count} 字</span>
                 </div>
                 <div
@@ -545,6 +715,10 @@ function App() {
           </li>
           <li>
             <strong>连续录音模式：</strong>按一次 <strong>⌘+.</strong> 开始录音，再按一次结束；录音中按 <strong>Esc</strong> 取消。
+          </li>
+          <li>
+            <strong>语音编辑：</strong>在任意应用中先选中文本，再按住 <strong>⌘+Option+.</strong>
+            说出指令（如“改正式”“翻译成英文”），松开自动替换选中文本；没有选中文本时会把指令当作自由生成。
           </li>
           <li>
             程序会自动识别、整理，并把文字输入到当前光标处。长文本或输入失败时会改用剪贴板粘贴。

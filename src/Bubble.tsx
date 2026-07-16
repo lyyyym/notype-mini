@@ -3,16 +3,20 @@ import { listen } from "@tauri-apps/api/event";
 
 function Bubble() {
   const [state, setState] = useState<"idle" | "recording" | "processing">("idle");
+  const [mode, setMode] = useState<"transcribe" | "edit" | undefined>(undefined);
   const [volume, setVolume] = useState(0);
   const [timer, setTimer] = useState(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
-    const unlistenState = listen<{ state: string }>("recording-state", (event) => {
-      const newState = event.payload.state as "idle" | "recording" | "processing";
-      setState(newState);
+    const unlistenState = listen<{ state: string; mode?: "transcribe" | "edit" }>(
+      "recording-state",
+      (event) => {
+        const newState = event.payload.state as "idle" | "recording" | "processing";
+        setState(newState);
+        setMode(event.payload.mode);
 
-      if (newState === "recording") {
+        if (newState === "recording") {
         setTimer(0);
         timerRef.current = setInterval(() => {
           setTimer((t) => t + 1);
@@ -61,7 +65,11 @@ function Bubble() {
           <div className="bubble-inner">
             <div className="bubble-icon">{state === "recording" ? "🎙️" : "🎤"}</div>
             <div className="bubble-status">
-              {state === "recording" ? "正在录音" : "准备就绪"}
+              {state === "recording"
+                ? mode === "edit"
+                  ? "正在听取编辑指令..."
+                  : "正在录音"
+                : "准备就绪"}
             </div>
             {state === "recording" && (
               <div className="bubble-timer">{formatTime(timer)}</div>

@@ -4,6 +4,19 @@ use std::path::PathBuf;
 
 const MAX_HISTORY_ENTRIES: usize = 200;
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum EntryType {
+    Transcribe,
+    Edit,
+}
+
+impl Default for EntryType {
+    fn default() -> Self {
+        EntryType::Transcribe
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HistoryEntry {
     pub id: String,
@@ -12,6 +25,8 @@ pub struct HistoryEntry {
     pub polished_text: String,
     pub word_count: usize,
     pub duration_ms: u64,
+    #[serde(default)]
+    pub entry_type: EntryType,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -83,7 +98,14 @@ pub fn export_to_markdown() -> Result<String, Box<dyn std::error::Error>> {
 
     for entry in store.entries {
         let time = entry.timestamp.format("%Y-%m-%d %H:%M:%S").to_string();
-        md.push_str(&format!("## {}\n\n{}\n\n", time, entry.polished_text));
+        let type_label = match entry.entry_type {
+            EntryType::Transcribe => "录音",
+            EntryType::Edit => "编辑",
+        };
+        md.push_str(&format!(
+            "## [{}] {}\n\n{}\n\n",
+            type_label, time, entry.polished_text
+        ));
     }
 
     Ok(md)
@@ -91,27 +113,97 @@ pub fn export_to_markdown() -> Result<String, Box<dyn std::error::Error>> {
 
 pub fn get_stats() -> HistoryStats {
     let store = load_store();
-    let total_words: usize = store.entries.iter().map(|e| e.word_count).sum();
-    let total_sessions = store.entries.len();
-
     let today = Local::now().date_naive();
-    let today_words: usize = store
-        .entries
-        .iter()
-        .filter(|e| e.timestamp.date_naive() == today)
-        .map(|e| e.word_count)
-        .sum();
+
+    let (transcribe_total_words, transcribe_today_words, transcribe_total_sessions) =
+        store.entries.iter().fold((0, 0, 0), |acc, e| {
+            if e.entry_type == EntryType::Transcribe {
+                (
+                    acc.0 + e.word_count,
+                    if e.timestamp.date_naive() == today {
+                        acc.1 + e.word_count
+                    } else {
+                        acc.1
+                    },
+                    acc.2 + 1,
+                )
+            } else {
+                acc
+            }
+        });
+
+    let (edit_total_words, edit_today_words, edit_total_sessions) =
+        store.entries.iter().fold((0, 0, 0), |acc, e| {
+            if e.entry_type == EntryType::Edit {
+                (
+                    acc.0 + e.word_count,
+                    if e.timestamp.date_naive() == today {
+                        acc.1 + e.word_count
+                    } else {
+                        acc.1
+                    },
+                    acc.2 + 1,
+                )
+            } else {
+                acc
+            }
+        });
 
     HistoryStats {
-        total_words,
-        today_words,
-        total_sessions,
+        transcribe_total_words,
+        transcribe_today_words,
+        transcribe_total_sessions,
+        edit_total_words,
+        edit_today_words,
+        edit_total_sessions,
     }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HistoryStats {
-    pub total_words: usize,
-    pub today_words: usize,
-    pub total_sessions: usize,
+    pub transcribe_total_words: usize,
+    pub transcribe_today_words: usize,
+    pub transcribe_total_sessions: usize,
+    pub edit_total_words: usize,
+    pub edit_today_words: usize,
+    pub edit_total_sessions: usize,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_stats_split_by_type() {
+        let entries = vec![
+            HistoryEntry {
+                id: "1".to_string(),
+                timestamp: Local::now(),
+                raw_text: "raw".to_string(),
+                polished_text: "hello world".to_string(),
+                word_count: 2,
+                duration_ms: 1000,
+                entry_type: EntryType::Transcribe,
+            },
+            HistoryEntry {
+                id: "2".to_string(),
+                timestamp: Local::now(),
+                raw_text: "raw".to_string(),
+                polished_text: "foo bar baz".to_string(),
+                word_count: 3,
+                duration_ms: 1000,
+                entry_type: EntryType::Edit,
+            },
+        ];
+
+        let mut store = HistoryStore::default();
+        store.entries = entries;
+        // 直接保存再加载来测试 stats
+        let _ = save_store(&store);
+        let stats = get_stats();
+        assert_eq!(stats.transcribe_total_words, 2);
+        assert_eq!(stats.edit_total_words, 3);
+        assert_eq!(stats.transcribe_total_sessions, 1);
+        assert_eq!(stats.edit_total_sessions, 1);
+    }
 }

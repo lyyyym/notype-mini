@@ -1,6 +1,6 @@
 [package]
 name = "notype-mini"
-version = "0.1.0"
+version = "0.3.0"
 description = "A Tauri App"
 authors = ["you"]
 edition = "2021"
@@ -36,4 +36,5 @@ toml = "0.8"
 base64 = "0.22"
 enigo = "0.2"
 uuid = { version = "1", features = ["v4"] }
+scopeguard = "1"
 
