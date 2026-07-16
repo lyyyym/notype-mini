@@ -704,11 +704,15 @@ async fn edit_pipeline(
 ) {
     eprintln!("[edit_pipeline] 开始识别指令");
 
+    // 气泡窗口隐藏后，给 macOS 一点时间把焦点交还给之前的应用
+    eprintln!("[edit_pipeline] 等待焦点恢复");
+    std::thread::sleep(std::time::Duration::from_millis(300));
+
     // 1. 识别指令
     let instruction = match dashscope::transcribe(wav_bytes, &config.dashscope).await {
         Ok(text) => dictionary::apply_dictionary(&text, &config.dictionary),
         Err(e) => {
-            eprintln!("指令识别失败: {}", e);
+            eprintln!("[edit_pipeline] 指令识别失败: {}", e);
             emit_error(&app,
                 "instruction_recognition_failed",
                 e.to_string(),
@@ -731,7 +735,7 @@ async fn edit_pipeline(
         ) {
             Ok(result) => result,
             Err(e) => {
-                eprintln!("获取选中文本失败: {}", e);
+                eprintln!("[edit_pipeline] 获取选中文本失败: {}", e);
                 emit_error(
                     &app,
                     "clipboard_capture_failed",
@@ -805,7 +809,7 @@ async fn edit_pipeline(
     if let Err(e) = type_text(
         &result_text, false, &config, &mut enigo
     ) {
-        eprintln!("编辑结果输入失败: {}", e);
+        eprintln!("[edit_pipeline] 编辑结果输入失败: {}", e);
         emit_error(
             &app,
             "input_failed",
@@ -814,6 +818,7 @@ async fn edit_pipeline(
         emit_state(&app, "idle", None);
         return;
     }
+    eprintln!("[edit_pipeline] 编辑结果已输入");
 
     // 再次恢复剪贴板（type_text 的 clipboard fallback 可能覆盖了它）
     eprintln!("[edit_pipeline] 最终恢复剪贴板");
@@ -909,7 +914,7 @@ fn capture_selected_text(
     // 模拟 Cmd+C
     // 等待用户物理上释放修饰键，避免虚拟按键与物理按键状态冲突
     eprintln!("[capture_selected_text] 等待物理按键释放");
-    std::thread::sleep(std::time::Duration::from_millis(200));
+    std::thread::sleep(std::time::Duration::from_millis(500));
 
     eprintln!("[capture_selected_text] 模拟 Cmd+C");
     // 使用 Key::Other(8) 对应标准键盘布局的 'c' 键，规避 enigo 0.2 中
