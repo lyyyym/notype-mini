@@ -907,9 +907,16 @@ fn capture_selected_text(
         .map_err(|e| anyhow::anyhow!("设置 sentinel 失败: {}", e))?;
 
     // 模拟 Cmd+C
+    // 等待用户物理上释放修饰键，避免虚拟按键与物理按键状态冲突
+    eprintln!("[capture_selected_text] 等待物理按键释放");
+    std::thread::sleep(std::time::Duration::from_millis(200));
+
     eprintln!("[capture_selected_text] 模拟 Cmd+C");
+    // 使用 Key::Other(8) 对应标准键盘布局的 'c' 键，规避 enigo 0.2 中
+    // Key::Unicode 在 macOS 上触发的 keycode_to_string 缓冲区溢出问题
+    const KEYCODE_C: u32 = 8;
     enigo.key(Key::Meta, enigo::Direction::Press)?;
-    enigo.key(Key::Unicode('c'), enigo::Direction::Click)?;
+    enigo.key(Key::Other(KEYCODE_C), enigo::Direction::Click)?;
     enigo.key(Key::Meta, enigo::Direction::Release)?;
 
     // 轮询剪贴板
