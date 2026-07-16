@@ -741,9 +741,8 @@ async fn edit_pipeline(
     }
 
     // 2. 获取选中文本
-    eprintln!("[edit_pipeline] 当前前置应用: {:?}", frontmost_app_name());
     eprintln!("[edit_pipeline] 开始捕获选中文本");
-    let (original_clipboard, selected_text) =
+    let (original_clipboard, selected_text, target_app) =
         match capture_selected_text(&config.edit_shortcut,
         ) {
             Ok(result) => result,
@@ -761,6 +760,7 @@ async fn edit_pipeline(
 
     // scopeguard 保证剪贴板恢复
     eprintln!("[edit_pipeline] 选中文本: {:?}", selected_text.as_ref().map(|s| s.chars().take(50).collect::<String>()));
+    eprintln!("[edit_pipeline] 捕获时目标应用: {:?}", target_app);
 
     let app_for_cleanup = app.clone();
     let _cleanup = scopeguard::guard(original_clipboard.clone(), |original| {
@@ -789,11 +789,19 @@ async fn edit_pipeline(
     // 4. 输入结果
     eprintln!("[edit_pipeline] 当前前置应用: {:?}", frontmost_app_name());
     eprintln!("[edit_pipeline] LLM 编辑结果: {}", result_text.chars().take(50).collect::<String>());
+
+    // 在输入前重新激活捕获选区时的目标应用，确保文字回到正确位置
+    if let Some(ref name) = target_app {
+        eprintln!("[edit_pipeline] 重新激活目标应用: {}", name);
+        activate_app(name);
+        std::thread::sleep(std::time::Duration::from_millis(200));
+    }
+
     eprintln!("[edit_pipeline] 开始输入结果");
     let mut enigo = match enigo::Enigo::new(&enigo::Settings::default()) {
         Ok(e) => Some(e),
         Err(e) => {
-            eprintln!("创建 Enigo 失败: {:?}", e);
+            eprintln!("[edit_pipeline] 创建 Enigo 失败: {:?}", e);
             emit_error(
                 &app,
                 "input_failed",
@@ -806,7 +814,7 @@ async fn edit_pipeline(
 
     if let Some(ref mut e) = enigo {
         if let Err(err) = release_modifiers(e) {
-            eprintln!("释放修饰键失败: {}", err);
+            eprintln!("[edit_pipeline] 释放修饰键失败: {}", err);
         }
     }
 
@@ -815,7 +823,7 @@ async fn edit_pipeline(
         if let Some(ref mut e) = enigo {
             use enigo::{Direction::Click, Key, Keyboard};
             if let Err(err) = e.key(Key::Delete, Click) {
-                eprintln!("删除选区失败: {:?}", err);
+                eprintln!("[edit_pipeline] 删除选区失败: {:?}", err);
             }
         }
     }
@@ -894,14 +902,45 @@ fn frontmost_app_name() -> Option<String> {
     }
 }
 
+// 激活指定应用（通过 System Events，避免依赖该应用是否支持 AppleScript）
+fn activate_app(name: &str) {
+    let script = format!(
+        "tell application \"System Events\" to set frontmost of first application process whose name is \"{}\" to true",
+        name
+    );
+    let output = std::process::Command::new("osascript")
+        .arg("-e")
+        .arg(&script)
+        .output();
+    match output {
+        Ok(out) if out.status.success() => {
+            eprintln!("[activate_app] 已激活 {}", name);
+        }
+        Ok(out) => {
+            eprintln!(
+                "[activate_app] 激活 {} 失败: {}",
+                name,
+                String::from_utf8_lossy(&out.stderr)
+            );
+        }
+        Err(e) => {
+            eprintln!("[activate_app] 运行 osascript 失败: {}", e);
+        }
+    }
+}
+
 // 捕获选中文本
 fn capture_selected_text(
     edit_shortcut_str: &str,
-) -> Result<(OriginalClipboard, Option<String>), anyhow::Error> {
+) -> Result<(OriginalClipboard, Option<String>, Option<String>), anyhow::Error> {
     use enigo::{Direction::Release, Enigo, Key, Keyboard, Settings};
 
     eprintln!("[capture_selected_text] 创建 Enigo");
     let mut enigo = Enigo::new(&Settings::default())?;
+
+    // 记录当前前置应用，以便后续重新激活
+    let target_app = frontmost_app_name();
+    eprintln!("[capture_selected_text] 当前前置应用: {:?}", target_app);
 
     // 根据编辑快捷键释放可能仍按下的修饰键
     eprintln!("[capture_selected_text] 释放修饰键");
@@ -972,7 +1011,7 @@ fn capture_selected_text(
     restore_clipboard_internal(&original, &mut clipboard)?;
 
     eprintln!("[capture_selected_text] 完成");
-    Ok((original, selected_text))
+    Ok((original, selected_text, target_app))
 }
 
 fn restore_clipboard(original: OriginalClipboard, _app: &AppHandle) {
