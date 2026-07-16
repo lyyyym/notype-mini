@@ -111,38 +111,52 @@ fn set_config(
         return Err("录音快捷键和编辑快捷键不能相同".to_string());
     }
 
-    // 保存配置
-    new_config.save().map_err(|e| e.to_string())?;
+    // 如果快捷键没有变化，直接保存配置即可，避免重复注册导致 macOS 热键注册失败
+    let old_parsed = *state.parsed_shortcut.lock().unwrap();
+    let old_parsed_edit = *state.parsed_edit_shortcut.lock().unwrap();
 
-    // 重新注册全局快捷键：先注册新的，成功后再注销旧的
-    let old_parsed = state.parsed_shortcut.lock().unwrap().replace(new_parsed);
-    let old_parsed_edit = state
-        .parsed_edit_shortcut
-        .lock()
-        .unwrap()
-        .replace(new_parsed_edit);
-
-    let register_result = register_shortcuts(
-        &app,
-        state.parsed_shortcut.lock().unwrap().as_ref().unwrap(),
-        state.parsed_edit_shortcut.lock().unwrap().as_ref().unwrap(),
-    );
-
-    if let Err(e) = register_result {
-        // 回滚
-        *state.parsed_shortcut.lock().unwrap() = old_parsed;
-        *state.parsed_edit_shortcut.lock().unwrap() = old_parsed_edit;
-        return Err(format!("注册新快捷键失败: {}", e));
+    if Some(new_parsed) == old_parsed && Some(new_parsed_edit) == old_parsed_edit {
+        new_config.save().map_err(|e| e.to_string())?;
+        *state.config.lock().unwrap() = new_config;
+        return Ok(());
     }
 
-    // 注销旧的
+    // 只注册发生变化的快捷键；先注册新的，成功后再注销旧的
+    let mut registered_shortcut = false;
+    if Some(new_parsed) != old_parsed {
+        app.global_shortcut()
+            .register(new_parsed)
+            .map_err(|e| format!("注册录音快捷键失败: {}", e))?;
+        registered_shortcut = true;
+    }
+
+    if Some(new_parsed_edit) != old_parsed_edit {
+        if let Err(e) = app.global_shortcut().register(new_parsed_edit) {
+            // 回滚已注册的录音快捷键
+            if registered_shortcut {
+                let _ = app.global_shortcut().unregister(new_parsed);
+            }
+            return Err(format!("注册编辑快捷键失败: {}", e));
+        }
+    }
+
+    *state.parsed_shortcut.lock().unwrap() = Some(new_parsed);
+    *state.parsed_edit_shortcut.lock().unwrap() = Some(new_parsed_edit);
+
+    // 注销旧快捷键
     if let Some(old) = old_parsed {
-        let _ = app.global_shortcut().unregister(old);
+        if old != new_parsed {
+            let _ = app.global_shortcut().unregister(old);
+        }
     }
     if let Some(old) = old_parsed_edit {
-        let _ = app.global_shortcut().unregister(old);
+        if old != new_parsed_edit {
+            let _ = app.global_shortcut().unregister(old);
+        }
     }
 
+    // 所有变更成功后持久化配置
+    new_config.save().map_err(|e| e.to_string())?;
     *state.config.lock().unwrap() = new_config;
     Ok(())
 }
