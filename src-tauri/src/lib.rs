@@ -250,6 +250,19 @@ fn emit_error(app: &AppHandle, code: &str, message: String) {
 fn show_bubble(app: &AppHandle) {
     if let Some(window) = app.get_webview_window("bubble") {
         let _ = window.center();
+
+        // macOS 上用 orderFrontRegardless 显示窗口但不激活，避免抢走焦点
+        #[cfg(target_os = "macos")]
+        unsafe {
+            use objc::runtime::Object;
+            use objc::{msg_send, sel, sel_impl};
+            if let Ok(ns_window) = window.ns_window() {
+                let ns_window = ns_window as *mut Object;
+                let _: () = msg_send![ns_window, orderFrontRegardless];
+            }
+        }
+
+        #[cfg(not(target_os = "macos"))]
         let _ = window.show();
         // 注意：不要调用 set_focus，否则气泡会抢走当前应用焦点
     }
@@ -499,10 +512,20 @@ fn type_text(
     auto_enter: bool,
     config: &config::Config,
     enigo: &mut Option<enigo::Enigo>,
+    force_clipboard_fallback: bool,
 ) -> Result<(), anyhow::Error> {
     use enigo::{
         Direction::Click, Direction::Press, Direction::Release, Enigo, Key, Keyboard, Settings,
     };
+
+    eprintln!(
+        "[type_text] 开始输入: len={} chars, threshold={}, use_fallback={}, auto_enter={}",
+        text.chars().count(),
+        config.clipboard_fallback_threshold,
+        config.use_clipboard_fallback,
+        auto_enter
+    );
+    eprintln!("[type_text] 输入前前置应用: {:?}", frontmost_app_name());
 
     let enigo = match enigo {
         Some(e) => e,
@@ -517,25 +540,39 @@ fn type_text(
 
     let mut used_clipboard = false;
 
-    if use_fallback && text.chars().count() > threshold {
+    if force_clipboard_fallback || (use_fallback && text.chars().count() > threshold) {
+        if force_clipboard_fallback {
+            eprintln!("[type_text] 强制使用剪贴板回退");
+        } else {
+            eprintln!("[type_text] 超过阈值，使用剪贴板回退");
+        }
         set_clipboard_text(text)?;
         used_clipboard = true;
     } else {
-        if let Err(e) = enigo.text(text) {
-            if use_fallback {
-                eprintln!("键盘输入失败，回退到剪贴板粘贴: {:?}", e);
-                set_clipboard_text(text)?;
-                used_clipboard = true;
-            } else {
-                return Err(anyhow::anyhow!("键盘输入失败: {:?}", e));
+        eprintln!("[type_text] 尝试 enigo.text 键盘输入");
+        match enigo.text(text) {
+            Ok(_) => eprintln!(
+                "[type_text] enigo.text 返回 Ok（事件已 post，不代表目标 App 已收到）"
+            ),
+            Err(e) => {
+                if use_fallback {
+                    eprintln!("[type_text] 键盘输入失败，回退到剪贴板粘贴: {:?}", e);
+                    set_clipboard_text(text)?;
+                    used_clipboard = true;
+                } else {
+                    return Err(anyhow::anyhow!("键盘输入失败: {:?}", e));
+                }
             }
         }
     }
 
     if used_clipboard {
         // macOS: Cmd+V
+        eprintln!("[type_text] 模拟 Cmd+V");
         enigo.key(Key::Meta, Press)?;
-        enigo.key(Key::Unicode('v'), Click)?;
+        // 与 Cmd+C 一致，使用 Key::Other 规避 enigo 0.2 中 Key::Unicode 的 macOS 栈溢出
+        const KEYCODE_V: u32 = 9;
+        enigo.key(Key::Other(KEYCODE_V), Click)?;
         enigo.key(Key::Meta, Release)?;
     }
 
@@ -544,6 +581,9 @@ fn type_text(
             .key(Key::Return, Click)
             .map_err(|e| anyhow::anyhow!("回车失败: {:?}", e))?;
     }
+
+    eprintln!("[type_text] 输入后前置应用: {:?}", frontmost_app_name());
+    eprintln!("[type_text] 完成");
 
     Ok(())
 }
@@ -670,8 +710,25 @@ async fn transcribe_pipeline(
 
             // 输入到光标位置
             eprintln!("[transcribe_pipeline] 开始输入，长度 {}", final_text.chars().count());
+
+            // 快照原剪贴板，以便粘贴后恢复
+            let original_clipboard = match arboard::Clipboard::new() {
+                Ok(mut clipboard) => match clipboard.get_text() {
+                    Ok(text) => OriginalClipboard::Text(text),
+                    Err(_) => match clipboard.get_image() {
+                        Ok(img) => OriginalClipboard::Image(img),
+                        Err(_) => OriginalClipboard::None,
+                    },
+                },
+                Err(e) => {
+                    eprintln!("[transcribe_pipeline] 剪贴板快照失败: {}", e);
+                    OriginalClipboard::None
+                }
+            };
+
             let mut enigo = None;
-            if let Err(e) = type_text(&final_text, config.auto_enter, &config, &mut enigo) {
+            if let Err(e) = type_text(&final_text, config.auto_enter, &config, &mut enigo, true
+            ) {
                 eprintln!("[transcribe_pipeline] 输入失败: {}", e);
                 emit_error(
                     &app,
@@ -681,6 +738,11 @@ async fn transcribe_pipeline(
             } else {
                 eprintln!("[transcribe_pipeline] 输入成功");
             }
+
+            // 等待目标应用完成粘贴，然后恢复原剪贴板
+            eprintln!("[transcribe_pipeline] 等待目标应用完成粘贴");
+            std::thread::sleep(std::time::Duration::from_millis(250));
+            restore_clipboard(original_clipboard, &app);
 
             // 保存到历史记录
             let entry = history::HistoryEntry {
@@ -792,12 +854,28 @@ async fn edit_pipeline(
 
     // 在输入前重新激活捕获选区时的目标应用，确保文字回到正确位置
     if let Some(ref name) = target_app {
-        eprintln!("[edit_pipeline] 重新激活目标应用: {}", name);
-        activate_app(name);
-        std::thread::sleep(std::time::Duration::from_millis(200));
+        let current_frontmost = frontmost_app_name();
+        eprintln!(
+            "[edit_pipeline] 捕获时目标应用: {}, 当前前置应用: {:?}",
+            name, current_frontmost
+        );
+        if current_frontmost.as_deref() != Some(name) {
+            eprintln!("[edit_pipeline] 前置应用已变化，重新激活目标应用: {}", name);
+            activate_app(name);
+            std::thread::sleep(std::time::Duration::from_millis(200));
+            eprintln!(
+                "[edit_pipeline] 激活后前置应用: {:?}",
+                frontmost_app_name()
+            );
+        } else {
+            eprintln!("[edit_pipeline] 目标应用已是前置应用，跳过 activate_app 避免焦点扰动");
+        }
     }
 
-    eprintln!("[edit_pipeline] 开始输入结果");
+    eprintln!(
+        "[edit_pipeline] 开始输入结果，当前前置应用: {:?}",
+        frontmost_app_name()
+    );
     let mut enigo = match enigo::Enigo::new(&enigo::Settings::default()) {
         Ok(e) => Some(e),
         Err(e) => {
@@ -820,16 +898,23 @@ async fn edit_pipeline(
 
     // 删除选区
     if selected_text.is_some() {
+        eprintln!("[edit_pipeline] 准备删除选区");
         if let Some(ref mut e) = enigo {
             use enigo::{Direction::Click, Key, Keyboard};
             if let Err(err) = e.key(Key::Delete, Click) {
                 eprintln!("[edit_pipeline] 删除选区失败: {:?}", err);
+            } else {
+                eprintln!("[edit_pipeline] 删除选区已发送");
             }
         }
     }
 
+    eprintln!(
+        "[edit_pipeline] 调用 type_text，结果长度: {}",
+        result_text.chars().count()
+    );
     if let Err(e) = type_text(
-        &result_text, false, &config, &mut enigo
+        &result_text, false, &config, &mut enigo, true
     ) {
         eprintln!("[edit_pipeline] 编辑结果输入失败: {}", e);
         emit_error(
@@ -840,8 +925,15 @@ async fn edit_pipeline(
         emit_state(&app, "idle", None);
         return;
     }
-    eprintln!("[edit_pipeline] 编辑结果已输入");
-    eprintln!("[edit_pipeline] 输入后前置应用: {:?}", frontmost_app_name());
+    eprintln!("[edit_pipeline] type_text 已返回 Ok");
+    eprintln!(
+        "[edit_pipeline] 输入后前置应用: {:?}",
+        frontmost_app_name()
+    );
+
+    // 给目标应用留出读取剪贴板的时间，再恢复原始剪贴板
+    eprintln!("[edit_pipeline] 等待目标应用完成粘贴");
+    std::thread::sleep(std::time::Duration::from_millis(250));
 
     // 再次恢复剪贴板（type_text 的 clipboard fallback 可能覆盖了它）
     eprintln!("[edit_pipeline] 最终恢复剪贴板");
@@ -1187,6 +1279,19 @@ pub fn run() {
                         api.prevent_close();
                     }
                 });
+            }
+
+            // 气泡窗口不响应鼠标事件，避免点击气泡时激活 NoType Mini
+            if let Some(window) = app.get_webview_window("bubble") {
+                #[cfg(target_os = "macos")]
+                unsafe {
+                    use objc::runtime::Object;
+                    use objc::{msg_send, sel, sel_impl};
+                    if let Ok(ns_window) = window.ns_window() {
+                        let ns_window = ns_window as *mut Object;
+                        let _: () = msg_send![ns_window, setIgnoresMouseEvents: true];
+                    }
+                }
             }
 
             // 解析并注册全局快捷键
