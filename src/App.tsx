@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 
@@ -87,6 +87,10 @@ function App() {
     config_version: 1,
   });
 
+  // 用 ref 保存最新配置，供声音反馈等回调读取
+  const configRef = useRef(config);
+  configRef.current = config;
+
   const [status, setStatus] = useState("等待开始...");
   const [statusType, setStatusType] = useState<"" | "success" | "error">("");
   const [lastResult, setLastResult] = useState("");
@@ -122,6 +126,45 @@ function App() {
     }
   };
 
+  // 声音反馈
+  const playTone = (
+    freq: number,
+    dur = 0.09,
+    gain = 0.045,
+    type: OscillatorType = "sine",
+    delay = 0
+  ) => {
+    if (!configRef.current.sound_feedback) return;
+    try {
+      const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+      if (audioCtx.state === "suspended") {
+        void audioCtx.resume();
+        if (audioCtx.state === "suspended") return;
+      }
+      const t = audioCtx.currentTime + delay;
+      const osc = audioCtx.createOscillator();
+      const g = audioCtx.createGain();
+      osc.type = type;
+      osc.frequency.value = freq;
+      g.gain.setValueAtTime(gain, t);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+      osc.connect(g).connect(audioCtx.destination);
+      osc.start(t);
+      osc.stop(t + dur);
+    } catch {
+      // best effort
+    }
+  };
+
+  const sounds = {
+    start: () => playTone(659, 0.07),
+    done: () => {
+      playTone(784, 0.07);
+      playTone(1175, 0.11, 0.04, "sine", 0.07);
+    },
+    error: () => playTone(196, 0.16, 0.04, "square"),
+  };
+
   useEffect(() => {
     // 加载配置
     invoke<Config>("get_config").then((loaded) => {
@@ -132,21 +175,24 @@ function App() {
     loadStats();
 
     // 监听事件
+    let prevState = "idle";
     const unlistenState = listen<RecordingStateEvent>("recording-state", (event) => {
       const { state, mode } = event.payload;
-      if (state === "recording") {
+      if (state === "recording" && prevState !== "recording") {
         if (mode === "edit") {
           setStatus("正在听取编辑指令...");
         } else {
           setStatus("正在录音...");
         }
         setStatusType("");
+        sounds.start();
       } else if (state === "processing") {
         setStatus("正在识别/整理...");
         setStatusType("");
       } else if (state === "idle") {
         setStatus("等待开始...");
       }
+      prevState = state;
     });
 
     const unlistenResult = listen<TranscriptionEvent>("transcription-result", (event) => {
@@ -157,6 +203,7 @@ function App() {
         setStatus("识别完成并已输入");
       }
       setStatusType("success");
+      sounds.done();
       loadHistory();
       loadStats();
     });
@@ -164,6 +211,7 @@ function App() {
     const unlistenError = listen<{ code: string; message: string }>("error", (event) => {
       setStatus(`错误: ${event.payload.message}`);
       setStatusType("error");
+      sounds.error();
     });
 
     return () => {
@@ -650,7 +698,7 @@ function App() {
             暂无历史记录
           </div>
         ) : (
-          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          <div className="history-list">
             {history.map((entry) => (
               <div
                 key={entry.id}

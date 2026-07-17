@@ -23,8 +23,8 @@
       {
         "label": "bubble",
         "title": "",
-        "width": 220,
-        "height": 220,
+        "width": 360,
+        "height": 200,
         "decorations": false,
         "alwaysOnTop": true,
         "skipTaskbar": true,
@@ -32,6 +32,7 @@
         "focusable": false,
         "transparent": true,
         "resizable": false,
+        "shadow": false,
         "center": true
       }
     ],

@@ -11,6 +11,12 @@ body {
   line-height: 1.5;
 }
 
+/* 气泡窗口需要完全透明背景，否则 transparent Tauri 窗口会透出 body 的灰色 */
+html:has(.bubble-container),
+body:has(.bubble-container) {
+  background: transparent;
+}
+
 /* 主窗口样式 */
 .app-container {
   max-width: 700px;
@@ -140,76 +146,186 @@ button {
   white-space: pre-wrap;
 }
 
-/* 气泡窗口样式 */
+/* 气泡窗口样式 —— 参考 notype 项目 */
 .bubble-container {
-  width: 220px;
-  height: 220px;
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
-  background: rgba(30, 30, 30, 0.92);
-  border-radius: 50%;
-  color: white;
+  justify-content: flex-start;
+  background: transparent;
   user-select: none;
-  overflow: hidden;
+  padding: 0;
+  width: 100vw;
+  height: 100vh;
+  overflow: visible;
 }
 
-.bubble-ring {
-  width: 160px;
-  height: 160px;
-  border-radius: 50%;
-  border: 3px solid rgba(255, 255, 255, 0.2);
+.bubble-container .card {
+  position: relative;
+  z-index: 1;
+  max-width: 320px;
+  min-width: 80px;
+  min-height: 40px;
+  padding: 12px 16px;
+  margin-bottom: 0;
+  background: white;
+  border-radius: 14px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.16);
+  color: #111;
+  transition: opacity 0.2s ease, transform 0.2s ease;
+  opacity: 0;
+  transform: translateY(6px);
+  pointer-events: none;
+}
+
+.bubble-container .card.text-mode {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.bubble-container .card-content {
   display: flex;
   align-items: center;
   justify-content: center;
-  position: relative;
-  transition: transform 0.1s ease-out;
+  min-height: 18px;
 }
 
-.bubble-ring.active {
-  border-color: #007aff;
+.bubble-container .result-text {
+  font-size: 15px;
+  line-height: 1.45;
+  word-break: break-word;
 }
 
-.bubble-inner {
-  text-align: center;
+.bubble-container .typing-dots {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  height: 18px;
 }
 
-.bubble-icon {
-  font-size: 48px;
-  margin-bottom: 8px;
-}
-
-.bubble-status {
-  font-size: 14px;
-  font-weight: 500;
-  opacity: 0.9;
-}
-
-.bubble-timer {
-  font-size: 12px;
-  opacity: 0.7;
-  margin-top: 4px;
-}
-
-.bubble-processing {
-  text-align: center;
-}
-
-.bubble-spinner {
-  width: 48px;
-  height: 48px;
-  border: 3px solid rgba(255, 255, 255, 0.2);
-  border-top-color: #007aff;
+.bubble-container .typing-dots i {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  background: #aaa;
   border-radius: 50%;
-  animation: spin 1s linear infinite;
-  margin: 0 auto 12px;
+  animation: dot-blink 1.4s infinite ease-in-out both;
 }
 
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
+.bubble-container .typing-dots i:nth-child(1) {
+  animation-delay: -0.32s;
+}
+
+.bubble-container .typing-dots i:nth-child(2) {
+  animation-delay: -0.16s;
+}
+
+@keyframes dot-blink {
+  0%, 80%, 100% {
+    opacity: 0.3;
+    transform: scale(0.8);
   }
+  40% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.bubble-container .pill {
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 34px;
+  padding: 0 14px;
+  margin-top: 10px;
+  background: rgba(0, 0, 0, 0.92);
+  border-radius: 17px;
+  color: white;
+  font-size: 13px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
+  transition: opacity 0.18s ease, transform 0.18s ease;
+}
+
+.bubble-container .pill.processing {
+  animation: pill-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes pill-pulse {
+  0%, 100% {
+    opacity: 0.75;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+.bubble-container .pill-text {
+  white-space: nowrap;
+  font-weight: 500;
+}
+
+.bubble-container .waveform {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  height: 20px;
+}
+
+.bubble-container .waveform i {
+  display: inline-block;
+  width: 3px;
+  min-height: 3px;
+  max-height: 22px;
+  background: white;
+  border-radius: 1.5px;
+  transition: height 0.05s ease;
+}
+
+.bubble-container .timer {
+  margin-top: 6px;
+  font-size: 12px;
+  color: rgba(0, 0, 0, 0.55);
+  font-variant-numeric: tabular-nums;
+}
+
+@media (prefers-color-scheme: dark) {
+  .bubble-container .card {
+    background: #1c1c1e;
+    color: #fff;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  }
+
+  .bubble-container .typing-dots i {
+    background: #888;
+  }
+
+  .bubble-container .timer {
+    color: rgba(255, 255, 255, 0.55);
+  }
+}
+
+/* 历史记录列表：固定高度内部滚动，避免页面被条目撑得过长 */
+.history-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-height: 320px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.history-list::-webkit-scrollbar {
+  width: 6px;
+}
+
+.history-list::-webkit-scrollbar-thumb {
+  background: #d2d2d7;
+  border-radius: 3px;
+}
+
+.history-list::-webkit-scrollbar-track {
+  background: transparent;
 }
 
 .shortcut-hint {

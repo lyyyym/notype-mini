@@ -249,24 +249,97 @@ fn emit_error(app: &AppHandle, code: &str, message: String) {
 // 显示/隐藏气泡窗口
 fn show_bubble(app: &AppHandle) {
     if let Some(window) = app.get_webview_window("bubble") {
-        let _ = window.center();
-
-        // macOS 上用 orderFrontRegardless 显示窗口但不激活，避免抢走焦点
         #[cfg(target_os = "macos")]
-        unsafe {
-            use objc::runtime::Object;
-            use objc::{msg_send, sel, sel_impl};
-            if let Ok(ns_window) = window.ns_window() {
-                let ns_window = ns_window as *mut Object;
-                let _: () = msg_send![ns_window, orderFrontRegardless];
+        {
+            // 气泡跟随鼠标光标，比 AX API 获取输入框更稳定
+            let (mx, my) = mouse_position();
+            let bubble_x = (mx - 180.0).max(0.0);
+            let bubble_y = my + 18.0;
+
+            unsafe {
+                use objc::runtime::Object;
+                use objc::{msg_send, sel, sel_impl};
+                if let Ok(ns_window) = window.ns_window() {
+                    let ns_window = ns_window as *mut Object;
+                    #[repr(C)]
+                    struct NSPoint { x: f64, y: f64 }
+                    let origin = NSPoint { x: bubble_x, y: bubble_y };
+                    let _: () = msg_send![ns_window, setFrameOrigin: origin];
+                    let _: () = msg_send![ns_window, orderFrontRegardless];
+                }
             }
+
+            // 显示气泡后立刻取消 NoType Mini 的 active 状态，
+            // 确保目标应用保持焦点，文字能输入到正确位置
+            deactivate_app();
         }
 
         #[cfg(not(target_os = "macos"))]
-        let _ = window.show();
+        {
+            let _ = window.center();
+            let _ = window.show();
+        }
         // 注意：不要调用 set_focus，否则气泡会抢走当前应用焦点
     }
 }
+
+// 获取当前鼠标在屏幕坐标系中的位置（macOS CoreGraphics）
+#[cfg(target_os = "macos")]
+fn mouse_position() -> (f64, f64) {
+    use std::ffi::c_void;
+
+    #[repr(C)]
+    struct CGPoint { x: f64, y: f64 }
+
+    #[link(name = "CoreGraphics", kind = "framework")]
+    extern "C" {
+        fn CGEventCreate(source: *const c_void) -> *mut c_void;
+        fn CGEventGetLocation(event: *const c_void) -> CGPoint;
+        fn CFRelease(cf: *const c_void);
+    }
+
+    unsafe {
+        let event = CGEventCreate(std::ptr::null());
+        if event.is_null() {
+            return (500.0, 300.0);
+        }
+        let p = CGEventGetLocation(event);
+        CFRelease(event);
+        (p.x, p.y)
+    }
+}
+
+// 让当前应用失去 active 状态，把焦点还给之前的应用（macOS）
+#[cfg(target_os = "macos")]
+fn deactivate_app() {
+    use std::ffi::c_char;
+
+    extern "C" {
+        fn objc_getClass(name: *const c_char) -> *mut std::ffi::c_void;
+        fn sel_registerName(name: *const c_char) -> *mut std::ffi::c_void;
+        #[link_name = "objc_msgSend"]
+        fn objc_msg_send(
+            obj: *mut std::ffi::c_void,
+            sel: *mut std::ffi::c_void,
+        ) -> *mut std::ffi::c_void;
+    }
+
+    unsafe {
+        let cls = objc_getClass(c"NSApplication".as_ptr());
+        if cls.is_null() {
+            return;
+        }
+        let sel_shared = sel_registerName(c"sharedApplication".as_ptr());
+        let ns_app = objc_msg_send(cls, sel_shared);
+        if !ns_app.is_null() {
+            let sel_deactivate = sel_registerName(c"deactivate".as_ptr());
+            let _ = objc_msg_send(ns_app, sel_deactivate);
+        }
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn deactivate_app() {}
 
 fn hide_bubble(app: &AppHandle) {
     if let Some(window) = app.get_webview_window("bubble") {
@@ -1285,10 +1358,19 @@ pub fn run() {
             if let Some(window) = app.get_webview_window("bubble") {
                 #[cfg(target_os = "macos")]
                 unsafe {
-                    use objc::runtime::Object;
+                    use objc::runtime::{Class, Object};
                     use objc::{msg_send, sel, sel_impl};
                     if let Ok(ns_window) = window.ns_window() {
                         let ns_window = ns_window as *mut Object;
+
+                        // 让窗口背景完全透明，消除白色边缘
+                        let _: () = msg_send![ns_window, setOpaque: false];
+                        let color_class = Class::get("NSColor").expect("NSColor not found");
+                        let clear_color: *mut Object = msg_send![color_class, clearColor];
+                        let _: () = msg_send![ns_window, setBackgroundColor: clear_color];
+                        let _: () = msg_send![ns_window, setHasShadow: false];
+
+                        // 不响应鼠标事件，避免点击气泡时激活 NoType Mini
                         let _: () = msg_send![ns_window, setIgnoresMouseEvents: true];
                     }
                 }
