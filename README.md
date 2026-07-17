@@ -2,7 +2,6 @@
 
 一款轻量级 macOS 桌面语音转写工具：按住快捷键说话，松开后自动把口语整理成规范文字并输入到当前光标处。
 
-> 受 Typeless / NoType 启发，作为个人练手项目，MVP 版本聚焦「按住说话 → AI 整理 → 自动输入」。
 
 ## ✨ 核心特性
 
@@ -109,5 +108,4 @@ MIT
 
 ## 🙏 致谢
 
-- 受 [NoType](https://github.com/NoType) / Typeless 启发
 - Tauri、cpal、enigo、DashScope、DeepSeek 等开源项目与 API 服务

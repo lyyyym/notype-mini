@@ -107,6 +107,8 @@ function App() {
   // 词典新增输入
   const [newFrom, setNewFrom] = useState("");
   const [newTo, setNewTo] = useState("");
+  // 词典是否有未保存的更改（添加/删除后、保存成功前为 true）
+  const [dictDirty, setDictDirty] = useState(false);
 
   const loadHistory = async () => {
     try {
@@ -226,6 +228,7 @@ function App() {
       await invoke("set_config", { newConfig: config });
       setStatus("配置已保存");
       setStatusType("success");
+      setDictDirty(false);
     } catch (e) {
       setStatus(`保存失败: ${e}`);
       setStatusType("error");
@@ -351,6 +354,9 @@ function App() {
       ...prev,
       dictionary: [...prev.dictionary, { from, to }],
     }));
+    setDictDirty(true);
+    setStatus(`已添加「${from} → ${to}」，保存配置后才会生效`);
+    setStatusType("success");
     setNewFrom("");
     setNewTo("");
   };
@@ -360,6 +366,9 @@ function App() {
       ...prev,
       dictionary: prev.dictionary.filter((_, i) => i !== index),
     }));
+    setDictDirty(true);
+    setStatus("词条已删除，保存配置后才会生效");
+    setStatusType("success");
   };
 
   const formatTime = (iso: string) => {
@@ -609,6 +618,33 @@ function App() {
         <p style={{ fontSize: 13, color: "#6e6e73", marginTop: -8 }}>
           把识别错误的词映射到正确写法，会在识别后、润色前自动替换。
         </p>
+
+        {dictDirty && (
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: 8,
+              fontSize: 13,
+              color: "#b25000",
+              background: "#fff4e5",
+              border: "1px solid #ffd9a8",
+              padding: "8px 12px",
+              borderRadius: 8,
+              marginBottom: 12,
+            }}
+          >
+            <span>词典有未保存的更改，保存后才会生效</span>
+            <button
+              className="btn-primary"
+              style={{ padding: "4px 12px", fontSize: 12 }}
+              onClick={handleSave}
+            >
+              立即保存
+            </button>
+          </div>
+        )}
 
         <div
           style={{
