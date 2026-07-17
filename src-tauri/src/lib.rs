@@ -570,9 +570,8 @@ fn type_text(
         // macOS: Cmd+V
         eprintln!("[type_text] 模拟 Cmd+V");
         enigo.key(Key::Meta, Press)?;
-        // 与 Cmd+C 一致，使用 Key::Other 规避 enigo 0.2 中 Key::Unicode 的 macOS 栈溢出
-        const KEYCODE_V: u32 = 9;
-        enigo.key(Key::Other(KEYCODE_V), Click)?;
+        // enigo 0.3 已修复 Key::Unicode 在 macOS 上的栈溢出，改回 'v'
+        enigo.key(Key::Unicode('v'), Click)?;
         enigo.key(Key::Meta, Release)?;
     }
 
@@ -1077,11 +1076,10 @@ fn capture_selected_text(
     std::thread::sleep(std::time::Duration::from_millis(500));
 
     eprintln!("[capture_selected_text] 模拟 Cmd+C");
-    // 使用 Key::Other(8) 对应标准键盘布局的 'c' 键，规避 enigo 0.2 中
-    // Key::Unicode 在 macOS 上触发的 keycode_to_string 缓冲区溢出问题
-    const KEYCODE_C: u32 = 8;
+    // enigo 0.3 已修复 macOS 上 Key::Unicode 的栈溢出问题，改回 Unicode 字符
+    // 以支持非 QWERTY 键盘布局
     enigo.key(Key::Meta, enigo::Direction::Press)?;
-    enigo.key(Key::Other(KEYCODE_C), enigo::Direction::Click)?;
+    enigo.key(Key::Unicode('c'), enigo::Direction::Click)?;
     enigo.key(Key::Meta, enigo::Direction::Release)?;
 
     // 轮询剪贴板

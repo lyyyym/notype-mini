@@ -42,7 +42,7 @@ cd src-tauri && cargo check
 
 - 桌面框架：Tauri v2（Rust 后端 + React/TypeScript 前端）
 - 音频采集：Rust `cpal`
-- 键盘模拟：Rust `enigo`
+- 键盘模拟：Rust `enigo` 0.3
 - 剪贴板：`arboard`
 - 语音识别：阿里云 DashScope（Paraformer / Qwen-ASR）
 - 文本润色/编辑：OpenAI 兼容 API（DeepSeek 等）
@@ -157,11 +157,15 @@ macOS 下 `tauri-plugin-global-shortcut` 不允许重复注册同一个热键。
 
 **正确做法：** 所有用户可能触发的代码路径（尤其是异步 pipeline 和全局快捷键回调）都必须用 `Result` 传播错误，并通过 `emit_error` 把错误展示给用户，绝不能用 `.expect`/`.unwrap` 假设外部资源一定可用。
 
-### enigo 0.2 `Key::Unicode` 在 macOS 上存在栈溢出
+### enigo 0.2 `Key::Unicode` 在 macOS 上存在栈溢出（V3.1 已修复）
+
+> 状态：仅影响 enigo 0.2.1，升级 0.3 后已解决，保留供参考。
 
 enigo 0.2.1 的 macOS 实现中，`Key::Unicode` 会调用 `keycode_to_string()` 把字符映射到 keycode。该函数内部只分配了一个 `i8` 类型的单字节缓冲区，却向它写入 `CFStringGetLength() + 1` 个字节，造成栈溢出，导致程序崩溃。
 
-**正确做法：** 在需要模拟组合键（如 `Cmd+C`）时，避免使用 `Key::Unicode`。对标准键盘布局，改用 `Key::Other(8)`（即 'c' 键的 keycode）配合 `Key::Meta` 来模拟；并注意在快捷键释放后留出短暂延迟，等用户物理修饰键释放后再模拟按键。
+**历史 workaround（V3.0）：** 在需要模拟组合键（如 `Cmd+C`）时，避免使用 `Key::Unicode`。对标准键盘布局，改用 `Key::Other(8)`（即 'c' 键的 keycode）配合 `Key::Meta` 来模拟；并注意在快捷键释放后留出短暂延迟，等用户物理修饰键释放后再模拟按键。
+
+**当前做法（V3.1+）：** 升级到 enigo 0.3 后该 bug 已修复，直接使用 `Key::Unicode('c')` / `Key::Unicode('v')` 模拟 `Cmd+C` / `Cmd+V`，对非 QWERTY 键盘布局更正确。
 
 ### 编辑模式的气泡窗口会抢走焦点
 
