@@ -92,6 +92,23 @@ pub fn clear_history() -> Result<(), Box<dyn std::error::Error>> {
     save_store(&HistoryStore::default())
 }
 
+pub fn update_polished_text(
+    id: &str,
+    new_text: String,
+) -> Result<Option<HistoryEntry>, Box<dyn std::error::Error>> {
+    let mut store = load_store();
+    let idx = store.entries.iter().position(|e| e.id == id);
+    if let Some(idx) = idx {
+        store.entries[idx].polished_text = new_text;
+        store.entries[idx].word_count = store.entries[idx].polished_text.chars().count();
+        let entry = store.entries[idx].clone();
+        save_store(&store)?;
+        Ok(Some(entry))
+    } else {
+        Ok(None)
+    }
+}
+
 pub fn export_to_markdown() -> Result<String, Box<dyn std::error::Error>> {
     let store = load_store();
     let mut md = String::from("# NoType Mini 转写历史\n\n");

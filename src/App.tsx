@@ -53,6 +53,12 @@ interface HistoryStats {
   edit_total_sessions: number;
 }
 
+interface CandidateEntry {
+  from: string;
+  to: string;
+  count: number;
+}
+
 interface RecordingStateEvent {
   state: string;
   mode?: "transcribe" | "edit";
@@ -109,6 +115,20 @@ function App() {
   const [newTo, setNewTo] = useState("");
   // 词典是否有未保存的更改（添加/删除后、保存成功前为 true）
   const [dictDirty, setDictDirty] = useState(false);
+  // 待确认候选词条
+  const [candidates, setCandidates] = useState<CandidateEntry[]>([]);
+  // 正在修正的历史记录 id
+  const [editingHistoryId, setEditingHistoryId] = useState<string | null>(null);
+  const [editingText, setEditingText] = useState("");
+
+  const loadCandidates = async () => {
+    try {
+      const list = await invoke<CandidateEntry[]>("get_candidates");
+      setCandidates(list);
+    } catch (e) {
+      console.error("加载候选词条失败:", e);
+    }
+  };
 
   const loadHistory = async () => {
     try {
@@ -175,6 +195,7 @@ function App() {
 
     loadHistory();
     loadStats();
+    loadCandidates();
 
     // 监听事件
     let prevState = "idle";
@@ -369,6 +390,64 @@ function App() {
     setDictDirty(true);
     setStatus("词条已删除，保存配置后才会生效");
     setStatusType("success");
+  };
+
+  const handleStartEditHistory = (entry: HistoryEntry) => {
+    if (entry.entry_type !== "transcribe") return;
+    setEditingHistoryId(entry.id);
+    setEditingText(entry.polished_text);
+  };
+
+  const handleCancelEditHistory = () => {
+    setEditingHistoryId(null);
+    setEditingText("");
+  };
+
+  const handleSubmitCorrection = async (id: string) => {
+    try {
+      const list = await invoke<CandidateEntry[]>("submit_correction", {
+        id,
+        correctedText: editingText,
+      });
+      setCandidates(list);
+      setEditingHistoryId(null);
+      setEditingText("");
+      loadHistory();
+      setStatus(`已修正，${list.length} 条候选进入待确认`);
+      setStatusType("success");
+    } catch (e) {
+      setStatus(`修正失败: ${e}`);
+      setStatusType("error");
+    }
+  };
+
+  const handleAcceptCandidate = async (from: string, to: string) => {
+    try {
+      await invoke("accept_candidate", { from, to });
+      setConfig((prev) => ({
+        ...prev,
+        dictionary: [...prev.dictionary, { from, to }],
+      }));
+      setDictDirty(true);
+      loadCandidates();
+      setStatus(`已接受「${from} → ${to}」，保存配置后生效`);
+      setStatusType("success");
+    } catch (e) {
+      setStatus(`接受候选失败: ${e}`);
+      setStatusType("error");
+    }
+  };
+
+  const handleRejectCandidate = async (from: string, to: string) => {
+    try {
+      await invoke("reject_candidate", { from, to });
+      loadCandidates();
+      setStatus("已拒绝该候选");
+      setStatusType("success");
+    } catch (e) {
+      setStatus(`拒绝候选失败: ${e}`);
+      setStatusType("error");
+    }
   };
 
   const formatTime = (iso: string) => {
@@ -654,6 +733,39 @@ function App() {
             marginBottom: 16,
           }}
         >
+          {candidates.length > 0 && (
+            <div className="candidate-list">
+              {candidates.map((c, index) => (
+                <div key={index} className="candidate-item">
+                  <div className="candidate-text">
+                    <span>{c.from}</span>
+                    <span style={{ color: "#6e6e73" }}>→</span>
+                    <span>{c.to || "（删除）"}</span>
+                    {c.count > 1 && (
+                      <span className="candidate-count">×{c.count}</span>
+                    )}
+                  </div>
+                  <div className="candidate-actions">
+                    <button
+                      className="btn-primary"
+                      style={{ padding: "4px 10px", fontSize: 12 }}
+                      onClick={() => handleAcceptCandidate(c.from, c.to)}
+                    >
+                      接受
+                    </button>
+                    <button
+                      className="btn-secondary"
+                      style={{ padding: "4px 10px", fontSize: 12 }}
+                      onClick={() => handleRejectCandidate(c.from, c.to)}
+                    >
+                      拒绝
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
           {config.dictionary.map((entry, index) => (
             <div
               key={index}
@@ -767,7 +879,25 @@ function App() {
                     whiteSpace: "pre-wrap",
                   }}
                 >
-                  {entry.polished_text}
+                  {editingHistoryId === entry.id ? (
+                    <textarea
+                      value={editingText}
+                      onChange={(e) => setEditingText(e.target.value)}
+                      style={{
+                        width: "100%",
+                        minHeight: 80,
+                        padding: 8,
+                        borderRadius: 6,
+                        border: "1px solid #d2d2d7",
+                        fontSize: 14,
+                        lineHeight: 1.6,
+                        fontFamily: "inherit",
+                        resize: "vertical",
+                      }}
+                    />
+                  ) : (
+                    entry.polished_text
+                  )}
                 </div>
                 <div className="button-row" style={{ margin: 0 }}>
                   <button
@@ -777,6 +907,36 @@ function App() {
                   >
                     复制
                   </button>
+                  {entry.entry_type === "transcribe" && (
+                    <>
+                      {editingHistoryId === entry.id ? (
+                        <>
+                          <button
+                            className="btn-primary"
+                            style={{ padding: "6px 12px", fontSize: 12 }}
+                            onClick={() => handleSubmitCorrection(entry.id)}
+                          >
+                            保存修正
+                          </button>
+                          <button
+                            className="btn-secondary"
+                            style={{ padding: "6px 12px", fontSize: 12 }}
+                            onClick={handleCancelEditHistory}
+                          >
+                            取消
+                          </button>
+                        </>
+                      ) : (
+                        <button
+                          className="btn-secondary"
+                          style={{ padding: "6px 12px", fontSize: 12 }}
+                          onClick={() => handleStartEditHistory(entry)}
+                        >
+                          修正
+                        </button>
+                      )}
+                    </>
+                  )}
                   <button
                     className="btn-secondary"
                     style={{ padding: "6px 12px", fontSize: 12 }}

@@ -339,3 +339,52 @@ button {
   font-family: monospace;
   color: #3a3a3c;
 }
+
+/* 候选词条队列 */
+.candidate-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.candidate-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  background: #fafafa;
+  border: 1px solid #e5e5ea;
+  padding: 8px 12px;
+  border-radius: 8px;
+}
+
+.candidate-text {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  flex-wrap: wrap;
+  flex: 1;
+}
+
+.candidate-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  background: #007aff;
+  color: white;
+  border-radius: 9px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.candidate-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}

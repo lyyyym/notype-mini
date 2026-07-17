@@ -1,4 +1,5 @@
 mod audio;
+mod candidates;
 mod config;
 mod dashscope;
 mod dictionary;
@@ -244,6 +245,81 @@ fn emit_error(app: &AppHandle, code: &str, message: String) {
             message,
         },
     );
+}
+
+// 命令：提交历史修正并生成候选词条
+#[tauri::command]
+fn submit_correction(
+    _app: AppHandle,
+    state: State<AppState>,
+    id: String,
+    corrected_text: String,
+) -> Result<Vec<candidates::CandidateEntry>, String> {
+    eprintln!("[submit_correction] id={}, corrected_text_len={}", id, corrected_text.chars().count());
+
+    if corrected_text.trim().is_empty() {
+        return Err("修正内容不能为空".to_string());
+    }
+    if corrected_text.chars().count() > 10_000 {
+        return Err("修正内容过长（超过 10000 字符）".to_string());
+    }
+
+    // 取出历史条目
+    let entries = history::get_entries(None);
+    let entry = entries
+        .into_iter()
+        .find(|e| e.id == id && e.entry_type == history::EntryType::Transcribe)
+        .ok_or("未找到对应的历史记录")?;
+
+    if entry.polished_text == corrected_text {
+        return Err("修正内容与原结果相同".to_string());
+    }
+
+    // 用 raw_text 作为 diff 基准
+    let pairs = candidates::extract_correction_pairs(&entry.raw_text, &corrected_text);
+    eprintln!("[submit_correction] 提取候选对: {:?}", pairs);
+
+    // 当前词典快照
+    let dict_snapshot: Vec<(String, String)> = {
+        let config = state.config.lock().unwrap();
+        config
+            .dictionary
+            .iter()
+            .map(|e| (e.from.clone(), e.to.clone()))
+            .collect()
+    };
+
+    let pending = candidates::add_candidates(&pairs, &dict_snapshot)
+        .map_err(|e| format!("保存候选失败: {}", e))?;
+
+    // 更新历史记录
+    history::update_polished_text(&id, corrected_text)
+        .map_err(|e| format!("更新历史记录失败: {}", e))?;
+
+    eprintln!("[submit_correction] 完成，当前候选数: {}", pending.len());
+    Ok(pending)
+}
+
+// 命令：获取候选词条队列
+#[tauri::command]
+fn get_candidates() -> Vec<candidates::CandidateEntry> {
+    candidates::get_candidates()
+}
+
+// 命令：接受候选词条
+#[tauri::command]
+fn accept_candidate(from: String, to: String) -> Result<(), String> {
+    candidates::accept_candidate(&from, &to)
+        .map_err(|e| format!("接受候选失败: {}", e))?;
+    Ok(())
+}
+
+// 命令：拒绝候选词条（永久拉黑）
+#[tauri::command]
+fn reject_candidate(from: String, to: String) -> Result<(), String> {
+    candidates::reject_candidate(&from, &to)
+        .map_err(|e| format!("拒绝候选失败: {}", e))?;
+    Ok(())
 }
 
 // 显示/隐藏气泡窗口
@@ -1322,6 +1398,10 @@ pub fn run() {
             clear_history,
             export_history,
             get_stats,
+            submit_correction,
+            get_candidates,
+            accept_candidate,
+            reject_candidate,
         ])
         .setup(|app| {
             // 设置 panic hook，把崩溃信息写入日志文件，便于用户反馈
